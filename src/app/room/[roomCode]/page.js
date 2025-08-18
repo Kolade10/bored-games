@@ -531,13 +531,13 @@ export default function RoomLobby() {
             </h3>
             {room.game_type === 'tic-tac-toe' ? (
               <ul className="text-slate-700 dark:text-slate-300 space-y-2 text-sm">
-                <li>• Players take turns placing X's and O's on the 3x3 grid</li>
+                <li>• Players take turns placing X&apos;s and O&apos;s on the 3x3 grid</li>
                 <li>• First player to get 3 in a row (horizontal, vertical, or diagonal) wins!</li>
-                <li>• If all 9 squares are filled with no winner, it's a draw</li>
+                <li>• If all 9 squares are filled with no winner, it&apos;s a draw</li>
               </ul>
             ) : (
               <ul className="text-slate-700 dark:text-slate-300 space-y-2 text-sm">
-                <li>• Round leader picks a letter (can't reuse letters from previous rounds)</li>
+                <li>• Round leader picks a letter (can&apos;t reuse letters from previous rounds)</li>
                 <li>• Fill in Name, Place, Animal, and Thing starting with that letter</li>
                 <li>• You have 60 seconds unless the leader stops the round early</li>
                 <li>• Unique answers get 10 points, duplicate answers get 5 points</li>

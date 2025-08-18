@@ -27,13 +27,13 @@ export default function About() {
           <div className="prose prose-lg max-w-none text-slate-700 dark:text-slate-300">
             <p className="text-xl leading-relaxed mb-6">
               Welcome to BoredGame - your ultimate destination for fun, engaging multiplayer games! 
-              We believe that the best games are the ones you play with friends, and we're here to 
+              We believe that the best games are the ones you play with friends, and we&apos;re here to 
               bring those classic experiences to the digital world.
             </p>
 
             <h3 className="text-2xl font-bold text-slate-900 dark:text-white mb-4">Our Mission</h3>
             <p className="mb-6">
-              To create simple, fun, and accessible games that bring people together. Whether you're 
+              To create simple, fun, and accessible games that bring people together. Whether you&apos;re 
               looking to pass time, challenge your friends, or test your quick thinking skills, 
               BoredGame has something for everyone.
             </p>
@@ -54,7 +54,7 @@ export default function About() {
             <h3 className="text-2xl font-bold text-slate-900 dark:text-white mb-4">Technology</h3>
             <p className="mb-6">
               Built with modern web technologies including Next.js, React, and Tailwind CSS for a 
-              smooth, responsive gaming experience across all devices. We're also planning to integrate 
+              smooth, responsive gaming experience across all devices. We&apos;re also planning to integrate 
               Supabase for real-time multiplayer functionality and user accounts.
             </p>
           </div>

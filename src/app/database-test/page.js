@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
+import Link from 'next/link';
 
 export default function DatabaseTest() {
   const [dbStatus, setDbStatus] = useState('Checking...');
@@ -94,7 +95,7 @@ export default function DatabaseTest() {
                 🚧 Database Setup Required
               </h3>
               <p className="text-yellow-700 dark:text-yellow-300 mb-4">
-                It looks like your database tables haven't been created yet. Please follow these steps:
+                It looks like your database tables haven&apos;t been created yet. Please follow these steps:
               </p>
               <ol className="list-decimal list-inside text-yellow-700 dark:text-yellow-300 space-y-2">
                 <li>Go to your Supabase dashboard</li>
@@ -112,13 +113,13 @@ export default function DatabaseTest() {
             >
               🔄 Test Again
             </button>
-            <a
+            <Link
               href="/"
               className="bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 
                        text-slate-800 dark:text-white font-bold py-2 px-4 rounded-lg"
             >
               🏠 Back to Home
-            </a>
+            </Link>
           </div>
         </div>
       </div>

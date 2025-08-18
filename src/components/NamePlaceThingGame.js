@@ -611,7 +611,7 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
             {canPlay && !hasSubmitted && (
               <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-lg">
                 <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-4">
-                  Your Answers (starting with "{selectedLetter}")
+                  Your Answers (starting with &quot;{selectedLetter}&quot;)
                 </h3>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                   {categories.map(category => (
@@ -684,7 +684,7 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
         {gameState === 'reviewing' && (
           <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl p-8">
             <h2 className="text-3xl font-bold text-slate-900 dark:text-white text-center mb-8">
-              Round {gameSession.current_round} Results - Letter "{selectedLetter}"
+              Round {gameSession.current_round} Results - Letter &quot;{selectedLetter}&quot;
             </h2>
             
             {/* Scores */}
@@ -712,7 +712,7 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
               {activePlayers.map(player => (
                 <div key={player.id} className="bg-slate-50 dark:bg-slate-700 rounded-2xl p-6">
                   <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">
-                    {player.name}'s Answers
+                    {player.name}&apos;s Answers
                   </h3>
                   {categories.map(category => {
                     const breakdown = scoreBreakdowns[player.id]?.[category.id];
