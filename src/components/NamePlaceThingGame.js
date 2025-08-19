@@ -62,6 +62,14 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
     };
   }, [gameSession.id]);
 
+  // React to game session changes (like round number updates)
+  useEffect(() => {
+    if (!isTransitioning) {
+      console.log('Game session current_round changed to:', gameSession.current_round);
+      loadGameData();
+    }
+  }, [gameSession.current_round]);
+
   useEffect(() => {
     let timer;
     if (gameState === 'playing' && timeLeft > 0) {
@@ -80,19 +88,34 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
         return;
       }
       
-      console.log('Loading game data for round:', gameSession.current_round);
+      // Fetch fresh game session data to ensure we have the latest round number
+      const { data: freshGameSession, error: sessionError } = await supabase
+        .from('game_sessions')
+        .select('*')
+        .eq('id', gameSession.id)
+        .single();
+
+      if (sessionError) {
+        console.error('Error fetching fresh game session:', sessionError);
+        return;
+      }
+
+      const currentRoundNumber = freshGameSession.current_round;
+      console.log('Loading game data for round:', currentRoundNumber, '(fresh from database)');
       
       // Load current round
       const { data: roundData, error: roundError } = await supabase
         .from('rounds')
         .select('*')
         .eq('session_id', gameSession.id)
-        .eq('round_number', gameSession.current_round)
+        .eq('round_number', currentRoundNumber)
         .single();
 
       console.log('Round data loaded:', roundData);
 
       if (roundData) {
+        console.log("Round data found:", roundData);
+        
         setCurrentRound(roundData);
         setSelectedLetter(roundData.letter || '');
         
@@ -108,13 +131,21 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
         } else {
           // Round exists but no letter selected yet
           setGameState('letter_selection');
+          setTimeLeft(60);
         }
       } else {
-        // No round yet, leader needs to select letter
+        // No round yet for this round number, leader needs to select letter
+        console.log('No round found for round number:', currentRoundNumber);
         setCurrentRound(null);
         setSelectedLetter('');
         setGameState('letter_selection');
         setTimeLeft(60);
+        // Clear all answer states when no round exists
+        setPlayerAnswers({});
+        setHasSubmitted(false);
+        setCurrentAnswers({ name: '', place: '', animal: '', thing: '' });
+        setRoundScores({});
+        setScoreBreakdowns({});
       }
 
       // Load used letters from ALL previous rounds (excluding current active round)
@@ -127,8 +158,8 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
       // Filter to get letters from completed rounds or rounds before current
       const usedLettersFromRounds = allRounds
         ?.filter(round => 
-          round.round_number < gameSession.current_round || 
-          (round.round_number === gameSession.current_round && round.status === 'completed')
+          round.round_number < currentRoundNumber || 
+          (round.round_number === currentRoundNumber && round.status === 'completed')
         )
         .map(round => round.letter)
         .filter(Boolean) || [];
@@ -136,7 +167,7 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
       setUsedLetters(usedLettersFromRounds);
 
       // Load player answers for current round
-      if (roundData && roundData.round_number === gameSession.current_round) {
+      if (roundData && roundData.round_number === currentRoundNumber) {
         const { data: answersData } = await supabase
           .from('player_answers')
           .select('*')
@@ -245,7 +276,12 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
         // Only reload if the current_round changed and we're not transitioning
         if (!isTransitioning && payload.new && payload.old && 
             payload.new.current_round !== payload.old.current_round) {
-          setTimeout(() => loadGameData(), 1000); // Longer delay for round changes
+          console.log('Round number changed, reloading after delay');
+          setTimeout(() => {
+            if (!isTransitioning) {
+              loadGameData();
+            }
+          }, 2000); // Longer delay for round changes to avoid race conditions
         }
       })
       .subscribe((status) => {
@@ -397,10 +433,22 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
 
   const nextRound = async () => {
     try {
+      console.log('Starting next round transition...');
       // Set transition flag to prevent loadGameData from interfering
       setIsTransitioning(true);
       
-      // Reset local state for new round FIRST
+      // Always go to next round (infinite rounds)
+      const nextRoundNumber = gameSession.current_round + 1;
+      const nextLeader = activePlayers[(nextRoundNumber - 1) % activePlayers.length];
+
+      console.log('Starting next round:', {
+        currentRound: gameSession.current_round,
+        nextRoundNumber,
+        nextLeader: nextLeader.name,
+        activePlayers: activePlayers.map(p => p.name)
+      });
+
+      // Reset local state FIRST to prevent confusion
       setCurrentRound(null);
       setHasSubmitted(false);
       setCurrentAnswers({ name: '', place: '', animal: '', thing: '' });
@@ -411,17 +459,8 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
       setGameState('letter_selection');
       setTimeLeft(60);
       
-      // Always go to next round (infinite rounds)
-      const nextRoundNumber = gameSession.current_round + 1;
-      const nextLeader = activePlayers[(nextRoundNumber - 1) % activePlayers.length];
-
-      console.log('Starting next round:', {
-        nextRoundNumber,
-        nextLeader: nextLeader.name,
-        activePlayers: activePlayers.map(p => p.name)
-      });
-
-      await supabase
+      // Update the game session in the database
+      const { error: sessionError } = await supabase
         .from('game_sessions')
         .update({ 
           current_round: nextRoundNumber,
@@ -429,10 +468,21 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
         })
         .eq('id', gameSession.id);
 
-      // Allow data loading again after a brief delay
+      if (sessionError) {
+        console.error('Error updating game session:', sessionError);
+        throw sessionError;
+      }
+
+      console.log('Game session updated successfully');
+
+      // Wait for the real-time subscription to propagate the session update
+      // and allow some time for any race conditions to resolve
       setTimeout(() => {
+        console.log('Ending transition, data should be stable now');
         setIsTransitioning(false);
-      }, 1000);
+        // Force a data reload to ensure we're in sync
+        loadGameData();
+      }, 2000); // Reduced to 2 seconds but with explicit reload
       
     } catch (error) {
       console.error('Error proceeding to next round:', error);
