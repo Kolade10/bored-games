@@ -35,6 +35,8 @@ CREATE TABLE game_sessions (
   current_round INTEGER DEFAULT 1,
   max_rounds INTEGER DEFAULT 3,
   current_leader_id UUID REFERENCES players(id),
+  first_player_id UUID REFERENCES players(id), -- For Tic Tac Toe: tracks who goes first
+  last_winner_id UUID REFERENCES players(id), -- For Tic Tac Toe: tracks last game winner
   round_data JSONB, -- Store round-specific data (letter, timer, etc.)
   status VARCHAR(20) DEFAULT 'waiting', -- 'waiting', 'playing', 'reviewing', 'finished'
   started_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),

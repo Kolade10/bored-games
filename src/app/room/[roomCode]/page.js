@@ -167,10 +167,44 @@ export default function RoomLobby() {
       // Clear any previous errors
       setError('');
 
-      // Find the first player to be the leader
-      const firstPlayer = players.find(p => !p.is_spectator && p.player_order === 1);
-      if (!firstPlayer) {
-        throw new Error('No first player found');
+      // For Tic Tac Toe, randomly select the first player for the first round
+      let firstPlayerId;
+      let lastWinnerId = null;
+      
+      if (room.game_type === 'tic-tac-toe') {
+        // Check if there's a previous game session to get the last winner
+        const { data: previousSessions, error: prevError } = await supabase
+          .from('game_sessions')
+          .select('last_winner_id, round_data')
+          .eq('room_id', room.id)
+          .eq('status', 'finished')
+          .order('ended_at', { ascending: false })
+          .limit(1);
+
+        if (prevError) {
+          console.error('Error checking previous sessions:', prevError);
+        }
+
+        const latestSession = previousSessions?.[0];
+        const previousWinner = latestSession?.last_winner_id || latestSession?.round_data?.last_winner_id;
+        
+        if (previousWinner && activePlayers.find(p => p.id === previousWinner)) {
+          // If there's a previous winner and they're still in the room, they start
+          firstPlayerId = previousWinner;
+          console.log('Previous winner starts:', previousWinner);
+        } else {
+          // Random selection for first game or if previous winner left
+          const randomIndex = Math.floor(Math.random() * activePlayers.length);
+          firstPlayerId = activePlayers[randomIndex].id;
+          console.log('Randomly selected first player:', firstPlayerId, 'from', activePlayers.length, 'players');
+        }
+      } else {
+        // For other games, use the first player as leader
+        const firstPlayer = players.find(p => !p.is_spectator && p.player_order === 1);
+        if (!firstPlayer) {
+          throw new Error('No first player found');
+        }
+        firstPlayerId = firstPlayer.id;
       }
 
       // Create new game session
@@ -178,9 +212,14 @@ export default function RoomLobby() {
         .from('game_sessions')
         .insert({
           room_id: room.id,
-          current_leader_id: firstPlayer.id,
+          current_leader_id: firstPlayerId,
           max_rounds: room.game_type === 'name-place-thing' ? 999 : 1, // Infinite rounds for name-place-thing
-          status: 'playing'
+          status: 'playing',
+          // Store additional data in round_data for now (until migration is applied)
+          round_data: room.game_type === 'tic-tac-toe' ? {
+            first_player_id: firstPlayerId,
+            last_winner_id: lastWinnerId
+          } : null
         })
         .select()
         .single();
@@ -323,11 +362,13 @@ export default function RoomLobby() {
   const hasEnoughPlayers = activePlayers.length >= minPlayers;
   const isRoomWaiting = room.status === 'waiting';
   const isCurrentPlayerActive = currentPlayer && !currentPlayer.is_spectator;
+  const isRoomOwner = currentPlayer && currentPlayer.player_order === 1; // Only room owner can start games
   const noActiveGameSession = !gameSession || gameSession.status === 'finished';
   
   const canStartGame = hasEnoughPlayers && 
                       isRoomWaiting && 
                       isCurrentPlayerActive &&
+                      isRoomOwner && // Add room owner check
                       noActiveGameSession;
 
   // Debug logging
@@ -340,6 +381,7 @@ export default function RoomLobby() {
     isRoomWaiting,
     currentPlayer: currentPlayer,
     isCurrentPlayerActive,
+    isRoomOwner,
     gameSession: gameSession,
     gameSessionStatus: gameSession?.status,
     noActiveGameSession,
@@ -460,7 +502,7 @@ export default function RoomLobby() {
               <div>Players: {activePlayers.length}/{room.max_players} (Min: {minPlayers})</div>
               <div>Room Status: {room.status} (Waiting: {isRoomWaiting.toString()})</div>
               <div>Game Session: {gameSession ? `${gameSession.status}` : 'None'} (No Active: {noActiveGameSession.toString()})</div>
-              <div>Current Player: {currentPlayer?.name} (Active: {isCurrentPlayerActive.toString()})</div>
+              <div>Current Player: {currentPlayer?.name} (Active: {isCurrentPlayerActive.toString()}, Owner: {isRoomOwner.toString()})</div>
               <div>Can Start: {canStartGame.toString()}</div>
             </div>
             
@@ -482,6 +524,8 @@ export default function RoomLobby() {
                   ? `Waiting for ${minPlayers} players to start... (${activePlayers.length}/${minPlayers})`
                   : !isCurrentPlayerActive 
                     ? 'Only players can start the game'
+                    : !isRoomOwner
+                      ? 'Only the room owner can start the game'
                     : 'Ready to start!'
                 }
               </div>

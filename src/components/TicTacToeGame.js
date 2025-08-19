@@ -12,7 +12,27 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
   const [winner, setWinner] = useState(null);
 
   const activePlayers = players.filter(p => !p.is_spectator).sort((a, b) => a.player_order - b.player_order);
-  const currentPlayerTurn = activePlayers[currentTurn % 2];
+  
+  // Helper function to get ordered players based on who starts
+  const getOrderedPlayers = () => {
+    // Get first player from game session (either from new columns or round_data)
+    const firstPlayerId = gameSession?.first_player_id || gameSession?.round_data?.first_player_id;
+    const firstPlayerIndex = activePlayers.findIndex(p => p.id === firstPlayerId);
+    
+    // Reorder players so the first player is at index 0
+    let orderedPlayers = [...activePlayers];
+    if (firstPlayerIndex > 0) {
+      orderedPlayers = [
+        activePlayers[firstPlayerIndex],
+        ...activePlayers.slice(0, firstPlayerIndex),
+        ...activePlayers.slice(firstPlayerIndex + 1)
+      ];
+    }
+    return orderedPlayers;
+  };
+
+  const orderedPlayers = getOrderedPlayers();
+  const currentPlayerTurn = orderedPlayers[currentTurn % 2];
   const isMyTurn = currentPlayer && !currentPlayer.is_spectator && currentPlayerTurn?.id === currentPlayer.id;
 
   const winningCombinations = [
@@ -32,8 +52,17 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
     };
   }, [gameSession.id]);
 
+  // Re-load game data when gameSession changes (e.g., new round started)
+  useEffect(() => {
+    if (gameSession) {
+      loadGameData();
+    }
+  }, [gameSession.first_player_id, gameSession.last_winner_id]);
+
   const loadGameData = async () => {
     try {
+      console.log('Loading game data for session:', gameSession.id);
+      
       const { data: movesData, error } = await supabase
         .from('tic_tac_toe_moves')
         .select('*')
@@ -42,12 +71,16 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
 
       if (error) throw error;
 
+      console.log('Loaded moves:', movesData?.length || 0);
       setMoves(movesData || []);
+      
+      const orderedPlayers = getOrderedPlayers();
+      console.log('Ordered players:', orderedPlayers.map(p => ({ id: p.id, name: p.name })));
       
       // Reconstruct board from moves
       const newBoard = Array(9).fill(null);
       movesData?.forEach(move => {
-        const symbol = move.player_id === activePlayers[0]?.id ? 'X' : 'O';
+        const symbol = move.player_id === orderedPlayers[0]?.id ? 'X' : 'O';
         newBoard[move.position] = symbol;
       });
       setBoard(newBoard);
@@ -58,8 +91,38 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
       if (gameWinner) {
         setWinner(gameWinner);
         setGameStatus('won');
+        console.log('Game won by:', gameWinner);
+        
+        // Update the game session with the winner
+        const winnerPlayerId = gameWinner === 'X' ? orderedPlayers[0]?.id : orderedPlayers[1]?.id;
+        if (winnerPlayerId) {
+          try {
+            // Try to update with new column
+            await supabase
+              .from('game_sessions')
+              .update({ last_winner_id: winnerPlayerId })
+              .eq('id', gameSession.id);
+          } catch (error) {
+            // If that fails, update round_data instead
+            console.log('Updating winner in round_data');
+            const currentRoundData = gameSession.round_data || {};
+            await supabase
+              .from('game_sessions')
+              .update({ 
+                round_data: {
+                  ...currentRoundData,
+                  last_winner_id: winnerPlayerId
+                }
+              })
+              .eq('id', gameSession.id);
+          }
+        }
       } else if (newBoard.every(square => square !== null)) {
         setGameStatus('draw');
+        console.log('Game is a draw');
+      } else {
+        setGameStatus('playing');
+        console.log('Game continues');
       }
     } catch (error) {
       console.error('Error loading game data:', error);
@@ -76,6 +139,17 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
         filter: `session_id=eq.${gameSession.id}`
       }, (payload) => {
         console.log('TicTacToe move detected:', payload);
+        loadGameData();
+      })
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'game_sessions',
+        filter: `id=eq.${gameSession.id}`
+      }, (payload) => {
+        console.log('Game session updated:', payload);
+        // When game session is updated (e.g., new round started), reload game data
+        console.log('Reloading game data due to session update');
         loadGameData();
       })
       .subscribe((status) => {
@@ -102,15 +176,30 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
     }
 
     try {
-      const symbol = currentPlayer.id === activePlayers[0]?.id ? 'X' : 'O';
+      // Get fresh ordered players data
+      const firstPlayerId = gameSession?.first_player_id;
+      const firstPlayerIndex = activePlayers.findIndex(p => p.id === firstPlayerId);
       
-      console.log('Making move:', { position, symbol, playerId: currentPlayer.id, sessionId: gameSession.id });
-
-      // Optimistic update
-      const newBoard = [...board];
-      newBoard[position] = symbol;
-      setBoard(newBoard);
-      setCurrentTurn(prev => prev + 1);
+      let freshOrderedPlayers = [...activePlayers];
+      if (firstPlayerIndex > 0) {
+        freshOrderedPlayers = [
+          activePlayers[firstPlayerIndex],
+          ...activePlayers.slice(0, firstPlayerIndex),
+          ...activePlayers.slice(firstPlayerIndex + 1)
+        ];
+      }
+      
+      const symbol = currentPlayer.id === freshOrderedPlayers[0]?.id ? 'X' : 'O';
+      
+      console.log('Making move:', { 
+        position, 
+        symbol, 
+        playerId: currentPlayer.id, 
+        sessionId: gameSession.id,
+        firstPlayerId,
+        orderedPlayers: freshOrderedPlayers.map(p => ({ id: p.id, name: p.name })),
+        isFirstPlayer: currentPlayer.id === freshOrderedPlayers[0]?.id
+      });
 
       const { data, error } = await supabase
         .from('tic_tac_toe_moves')
@@ -125,33 +214,105 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
 
       if (error) {
         console.error('Error making move:', error);
-        // Revert optimistic update on error
+        // Reload game data on error
         loadGameData();
       } else {
         console.log('Move successful:', data);
+        // The real-time subscription will handle updating the board
       }
 
     } catch (error) {
       console.error('Error making move:', error);
-      // Revert optimistic update on error
+      // Reload game data on error
       loadGameData();
     }
   };
 
   const newGame = async () => {
+    // Only allow room owner to start new games
+    if (!currentPlayer || currentPlayer.is_spectator || currentPlayer.player_order !== 1) {
+      console.log('Only room owner can start new games');
+      return;
+    }
+
     try {
+      console.log('Starting new round...');
+      
       // Delete existing moves
-      await supabase
+      const { error: deleteError } = await supabase
         .from('tic_tac_toe_moves')
         .delete()
         .eq('session_id', gameSession.id);
 
-      // Reset local state
+      if (deleteError) {
+        console.error('Error deleting moves:', deleteError);
+        throw deleteError;
+      }
+
+      // Determine who starts the new round
+      let newFirstPlayerId;
+      if (gameStatus === 'won') {
+        // Winner of the last game starts the new round
+        const orderedPlayers = getOrderedPlayers();
+        const winnerPlayerId = winner === 'X' ? orderedPlayers[0]?.id : orderedPlayers[1]?.id;
+        newFirstPlayerId = winnerPlayerId;
+        console.log('Winner starts next round:', winnerPlayerId);
+      } else {
+        // For draws or other cases, keep the same first player or randomize
+        const activePlayers = players.filter(p => !p.is_spectator);
+        newFirstPlayerId = gameSession?.first_player_id || gameSession?.round_data?.first_player_id || activePlayers[Math.floor(Math.random() * activePlayers.length)].id;
+        console.log('Random/same player starts next round:', newFirstPlayerId);
+      }
+
+      // Update the game session with the new first player
+      console.log('Updating game session with new first player:', newFirstPlayerId);
+      try {
+        const { error: updateError } = await supabase
+          .from('game_sessions')
+          .update({ 
+            first_player_id: newFirstPlayerId,
+            current_leader_id: newFirstPlayerId
+          })
+          .eq('id', gameSession.id);
+
+        if (updateError) throw updateError;
+        console.log('Game session updated with new columns');
+      } catch (error) {
+        // If that fails, update round_data instead
+        console.log('Updating first player in round_data');
+        const currentRoundData = gameSession.round_data || {};
+        const { error: roundDataError } = await supabase
+          .from('game_sessions')
+          .update({ 
+            current_leader_id: newFirstPlayerId,
+            round_data: {
+              ...currentRoundData,
+              first_player_id: newFirstPlayerId
+            }
+          })
+          .eq('id', gameSession.id);
+
+        if (roundDataError) {
+          console.error('Error updating round_data:', roundDataError);
+          throw roundDataError;
+        }
+        console.log('Game session updated with round_data');
+      }
+
+      // Reset local state immediately for the room owner
       setBoard(Array(9).fill(null));
       setMoves([]);
       setCurrentTurn(0);
       setGameStatus('playing');
       setWinner(null);
+      
+      console.log('Local state reset for new round');
+
+      // Force a reload of game data after a brief delay to ensure realtime updates propagated
+      setTimeout(() => {
+        console.log('Forcing game data reload');
+        loadGameData();
+      }, 500);
     } catch (error) {
       console.error('Error starting new game:', error);
     }
@@ -199,15 +360,27 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
 
   const getStatusMessage = () => {
     if (gameStatus === 'won') {
-      const winnerPlayer = activePlayers.find(p => 
-        (p.id === activePlayers[0]?.id && winner === 'X') || 
-        (p.id === activePlayers[1]?.id && winner === 'O')
+      const orderedPlayers = getOrderedPlayers();
+      const winnerPlayer = orderedPlayers.find(p => 
+        (p.id === orderedPlayers[0]?.id && winner === 'X') || 
+        (p.id === orderedPlayers[1]?.id && winner === 'O')
       );
-      return `🎉 ${winnerPlayer?.name} Wins!`;
+      
+      // Show personalized message for the current player
+      if (currentPlayer && !currentPlayer.is_spectator) {
+        if (winnerPlayer?.id === currentPlayer.id) {
+          return `🎉 You Win!`;
+        } else {
+          return `😢 You Lose!`;
+        }
+      } else {
+        // For spectators, show the winner's name
+        return `🎉 ${winnerPlayer?.name} Wins!`;
+      }
     } else if (gameStatus === 'draw') {
       return "🤝 It's a Draw!";
     } else {
-      return `${currentPlayerTurn?.name}'s Turn (${currentPlayerTurn?.id === activePlayers[0]?.id ? 'X' : 'O'})`;
+      return `${currentPlayerTurn?.name}'s Turn (${currentPlayerTurn?.id === orderedPlayers[0]?.id ? 'X' : 'O'})`;
     }
   };
 
@@ -238,7 +411,7 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
               {getStatusMessage()}
             </h2>
             <div className="flex items-center justify-center space-x-4">
-              {activePlayers.map((player, index) => (
+              {orderedPlayers.map((player, index) => (
                 <div key={player.id} className={`flex items-center space-x-2 px-4 py-2 rounded-full ${
                   currentPlayerTurn?.id === player.id && gameStatus === 'playing'
                     ? index === 0 ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'
@@ -253,6 +426,14 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
             {!currentPlayer?.is_spectator && (
               <div className="mt-2 text-sm text-slate-600 dark:text-slate-400">
                 {isMyTurn ? "It's your turn!" : "Waiting for opponent..."}
+                {gameStatus === 'won' && (
+                  <div className="mt-1">
+                    Next round: {orderedPlayers.find(p => 
+                      (p.id === orderedPlayers[0]?.id && winner === 'X') || 
+                      (p.id === orderedPlayers[1]?.id && winner === 'O')
+                    )?.name} starts (winner goes first)
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -265,7 +446,7 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
           {/* Game Controls */}
           {gameStatus !== 'playing' && (
             <div className="flex flex-col sm:flex-row gap-4 justify-center mb-6">
-              {!currentPlayer?.is_spectator && (
+              {!currentPlayer?.is_spectator && currentPlayer?.player_order === 1 && (
                 <button
                   onClick={newGame}
                   className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 
@@ -273,6 +454,11 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
                 >
                   🔄 New Round
                 </button>
+              )}
+              {!currentPlayer?.is_spectator && currentPlayer?.player_order !== 1 && (
+                <div className="text-sm text-slate-600 dark:text-slate-400 text-center">
+                  Only the room owner can start new rounds
+                </div>
               )}
               <button
                 onClick={endGame}
