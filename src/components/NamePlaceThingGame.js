@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { supabase } from '@/lib/supabase';
+import { batchValidateWords } from '@/lib/wordValidation';
 import Link from 'next/link';
 
 export default function NamePlaceThingGame({ room, players, currentPlayer, gameSession }) {
@@ -22,6 +23,7 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
   const [roundScores, setRoundScores] = useState({});
   const [scoreBreakdowns, setScoreBreakdowns] = useState({});
   const [isTransitioning, setIsTransitioning] = useState(false);
+  const [isCalculatingScores, setIsCalculatingScores] = useState(false);
 
   const activePlayers = players.filter(p => !p.is_spectator).sort((a, b) => a.player_order - b.player_order);
   
@@ -341,6 +343,8 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
     if (!currentRound) return;
 
     try {
+      setIsCalculatingScores(true);
+      
       await supabase
         .from('rounds')
         .update({ 
@@ -354,6 +358,8 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
 
     } catch (error) {
       console.error('Error stopping round:', error);
+    } finally {
+      setIsCalculatingScores(false);
     }
   };
 
@@ -369,7 +375,41 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
 
       if (!allAnswers || allAnswers.length === 0) return;
 
-      // Calculate scores for each player with detailed breakdown
+      console.log('Calculating scores with word validation...');
+
+      // Prepare all words for batch validation
+      const wordsToValidate = [];
+      allAnswers.forEach(playerAnswer => {
+        categories.forEach(category => {
+          const answer = playerAnswer.answers[category.id]?.trim();
+          if (answer) {
+            wordsToValidate.push({
+              word: answer,
+              category: category.id,
+              playerId: playerAnswer.player_id
+            });
+          }
+        });
+      });
+
+      // Batch validate all words
+      const validationResults = await batchValidateWords(
+        wordsToValidate.map(({word, category}) => ({word, category}))
+      );
+
+      // Create a lookup map for validation results
+      const validationMap = new Map();
+      wordsToValidate.forEach((wordInfo, index) => {
+        const key = `${wordInfo.playerId}-${wordInfo.category}`;
+        validationMap.set(key, {
+          ...validationResults[index],
+          ...wordInfo
+        });
+      });
+
+      console.log('Word validation results:', validationResults);
+
+      // Calculate scores for each player with enhanced breakdown
       const playerScores = {};
       const scoreBreakdowns = {};
       
@@ -378,39 +418,109 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
         scoreBreakdowns[playerAnswer.player_id] = {};
         
         categories.forEach(category => {
-          const answer = playerAnswer.answers[category.id]?.trim().toLowerCase();
+          const answer = playerAnswer.answers[category.id]?.trim();
+          const validationKey = `${playerAnswer.player_id}-${category.id}`;
+          const validation = validationMap.get(validationKey);
+
           if (!answer) {
-            scoreBreakdowns[playerAnswer.player_id][category.id] = { answer: '', points: 0, reason: 'No answer' };
+            scoreBreakdowns[playerAnswer.player_id][category.id] = { 
+              answer: '', 
+              points: 0, 
+              reason: 'No answer' 
+            };
             return;
           }
 
           // Check if answer starts with the correct letter
           if (answer.charAt(0).toLowerCase() !== selectedLetter.toLowerCase()) {
             scoreBreakdowns[playerAnswer.player_id][category.id] = { 
-              answer: playerAnswer.answers[category.id]?.trim() || '', 
+              answer: answer, 
               points: 0, 
               reason: 'Wrong letter' 
             };
             return;
           }
 
-          // Count how many players gave the same answer
-          const sameAnswers = allAnswers.filter(otherAnswer => 
-            otherAnswer.answers[category.id]?.trim().toLowerCase() === answer
-          );
+          // Check word validity and category match
+          if (validation && !validation.isValid) {
+            scoreBreakdowns[playerAnswer.player_id][category.id] = { 
+              answer: answer, 
+              points: 0, 
+              reason: 'Not found in dictionary' 
+            };
+            return;
+          }
 
-          // Award points: 10 for unique, 5 for duplicate
-          const points = sameAnswers.length === 1 ? 10 : 5;
-          const reason = sameAnswers.length === 1 ? 'Unique' : `Shared with ${sameAnswers.length - 1} other${sameAnswers.length > 2 ? 's' : ''}`;
+          if (validation && validation.isValid && !validation.isCorrectCategory) {
+            scoreBreakdowns[playerAnswer.player_id][category.id] = { 
+              answer: answer, 
+              points: 0, 
+              reason: `Not a valid ${category.label.toLowerCase()}` 
+            };
+            return;
+          }
+
+          // Count how many players gave the same valid answer
+          const sameAnswers = allAnswers.filter(otherAnswer => {
+            const otherAnswer_text = otherAnswer.answers[category.id]?.trim().toLowerCase();
+            const currentAnswer_text = answer.toLowerCase();
+            return otherAnswer_text === currentAnswer_text;
+          });
+
+          // Enhanced scoring system:
+          // - 15 points for unique valid dictionary word in correct category
+          // - 12 points for unique known name/place (not in dictionary but in our list)
+          // - 10 points for shared valid dictionary word in correct category  
+          // - 8 points for shared known name/place
+          // - 5 points for unique word (if validation failed due to API issues)
+          // - 3 points for shared word (if validation failed due to API issues)
+          let points = 0;
+          let reason = '';
+
+          if (validation && validation.isCorrectCategory) {
+            if (validation.isValid) {
+              // Valid dictionary word in correct category
+              points = sameAnswers.length === 1 ? 15 : 10;
+              reason = sameAnswers.length === 1 
+                ? 'Unique valid dictionary word' 
+                : `Valid dictionary word, shared with ${sameAnswers.length - 1} other${sameAnswers.length > 2 ? 's' : ''}`;
+            } else {
+              // Known word (in our curated lists) but not in dictionary
+              points = sameAnswers.length === 1 ? 12 : 8;
+              reason = sameAnswers.length === 1 
+                ? 'Unique known word' 
+                : `Known word, shared with ${sameAnswers.length - 1} other${sameAnswers.length > 2 ? 's' : ''}`;
+            }
+          } else if (validation && !validation.isCorrectCategory) {
+            // Wrong category
+            points = 0;
+            reason = validation.reason || 'Wrong category';
+          } else {
+            // Fallback scoring (for API failures or edge cases)
+            points = sameAnswers.length === 1 ? 5 : 3;
+            reason = sameAnswers.length === 1 
+              ? 'Unique word (unverified)' 
+              : `Unverified word, shared with ${sameAnswers.length - 1} other${sameAnswers.length > 2 ? 's' : ''}`;
+          }
           
           playerScores[playerAnswer.player_id] += points;
           scoreBreakdowns[playerAnswer.player_id][category.id] = {
-            answer: playerAnswer.answers[category.id]?.trim() || '',
+            answer: answer,
             points,
-            reason
+            reason,
+            isValidWord: validation?.isValid || false,
+            isCorrectCategory: validation?.isCorrectCategory || false,
+            definition: validation?.definition,
+            meaning: validation?.meaning,
+            origin: validation?.origin,
+            gender: validation?.gender,
+            source: validation?.source
           };
         });
       });
+
+      console.log('Final scores:', playerScores);
+      console.log('Score breakdowns:', scoreBreakdowns);
 
       // Save scores to database
       for (const [playerId, score] of Object.entries(playerScores)) {
@@ -736,6 +846,32 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
             <h2 className="text-3xl font-bold text-slate-900 dark:text-white text-center mb-8">
               Round {gameSession.current_round} Results - Letter &quot;{selectedLetter}&quot;
             </h2>
+
+            {isCalculatingScores && (
+              <div className="mb-8 p-6 bg-blue-50 dark:bg-blue-900/20 rounded-2xl border border-blue-200 dark:border-blue-800">
+                <div className="flex items-center justify-center">
+                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mr-4"></div>
+                  <div className="text-blue-800 dark:text-blue-200">
+                    <div className="font-bold">Validating words and calculating scores...</div>
+                    <div className="text-sm">This may take a few moments as we check each word in the dictionary.</div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Scoring Information */}
+            <div className="mb-6 p-4 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 rounded-xl border border-green-200 dark:border-green-800">
+              <h4 className="font-bold text-green-800 dark:text-green-200 mb-2">📚 Enhanced Scoring System</h4>
+              <div className="text-sm text-green-700 dark:text-green-300 space-y-1">
+                <div>• <strong>15 points:</strong> Unique valid dictionary word in correct category</div>
+                <div>• <strong>12 points:</strong> Unique known word (names/places from our curated list)</div>
+                <div>• <strong>10 points:</strong> Valid dictionary word (shared with others)</div>
+                <div>• <strong>8 points:</strong> Known word (shared with others)</div>
+                <div>• <strong>5 points:</strong> Unique word (unverified)</div>
+                <div>• <strong>3 points:</strong> Shared unverified word</div>
+                <div>• <strong>0 points:</strong> Wrong letter, invalid word, or wrong category</div>
+              </div>
+            </div>
             
             {/* Scores */}
             <div className="mb-8">
@@ -758,8 +894,21 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
             </div>
 
             {/* Answers with Point Breakdown */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-              {activePlayers.map(player => (
+            <div className="mb-6">
+              <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4 text-center">Detailed Results</h3>
+              
+              {/* Legend */}
+              <div className="mb-4 p-3 bg-slate-100 dark:bg-slate-700 rounded-lg">
+                <div className="text-sm text-slate-600 dark:text-slate-400 text-center">
+                  <strong>Legend:</strong> 
+                  <span className="ml-2">✓ = Valid dictionary word</span>
+                  <span className="ml-2">📂 = Correct category</span>
+                  <span className="ml-2">⭐ = Known word (curated list)</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">{activePlayers.map(player => (
                 <div key={player.id} className="bg-slate-50 dark:bg-slate-700 rounded-2xl p-6">
                   <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">
                     {player.name}&apos;s Answers
@@ -767,10 +916,12 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
                   {categories.map(category => {
                     const breakdown = scoreBreakdowns[player.id]?.[category.id];
                     const answer = playerAnswers[player.id]?.[category.id] || 'No answer';
+                    const points = breakdown?.points || 0;
+                    
                     return (
                       <div key={category.id} className="mb-3 p-3 bg-white dark:bg-slate-600 rounded-lg">
                         <div className="flex justify-between items-start">
-                          <div>
+                          <div className="flex-1">
                             <span className="font-medium text-slate-700 dark:text-slate-300">
                               {category.label}:
                             </span>
@@ -780,13 +931,35 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
                             {breakdown && (
                               <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">
                                 {breakdown.reason}
+                                {breakdown.isValidWord && breakdown.definition && (
+                                  <div className="mt-1 italic text-slate-500 dark:text-slate-400">
+                                    "{breakdown.definition}"
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
-                          <div className="text-right">
-                            <span className={`font-bold ${(breakdown?.points || 0) > 0 ? 'text-green-600' : 'text-red-500'}`}>
-                              {breakdown?.points || 0} pts
-                            </span>
+                          <div className="text-right ml-3">
+                            <div className="flex items-center">
+                              <span className={`font-bold ${points > 0 ? 'text-green-600' : 'text-red-500'}`}>
+                                {points} pts
+                              </span>
+                              {breakdown?.isValidWord && (
+                                <span className="ml-1 text-green-500" title="Valid dictionary word">
+                                  ✓
+                                </span>
+                              )}
+                              {breakdown?.isCorrectCategory && !breakdown?.isValidWord && (
+                                <span className="ml-1 text-yellow-500" title="Known word (curated list)">
+                                  ⭐
+                                </span>
+                              )}
+                              {breakdown?.isCorrectCategory && (
+                                <span className="ml-1 text-blue-500" title="Correct category">
+                                  📂
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </div>
