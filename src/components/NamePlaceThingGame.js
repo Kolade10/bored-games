@@ -933,7 +933,7 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
                                 {breakdown.reason}
                                 {breakdown.isValidWord && breakdown.definition && (
                                   <div className="mt-1 italic text-slate-500 dark:text-slate-400">
-                                    "{breakdown.definition}"
+                                    &quot;{breakdown.definition}&quot;
                                   </div>
                                 )}
                               </div>
