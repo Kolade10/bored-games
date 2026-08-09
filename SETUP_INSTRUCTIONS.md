@@ -56,6 +56,16 @@ each file (not the filename) and hit Run:
 3. **`database_migration_3.sql`** - adds the `chat_messages` table for in-room
    chat. Also idempotent. Until it is run the chat button simply does not
    appear; nothing else is affected.
+4. **`database_migration_4.sql`** - adds Word Duel. Required before that game
+   can be played. Also idempotent.
+
+Migration 4 is worth understanding: the secret words are deliberately **not
+readable by the browser**. `SELECT` on `wordle_words.word` is revoked from the
+`anon` role, and guesses are graded by `wordle_submit_guess()`, a
+`SECURITY DEFINER` function that reads the word server-side and returns only
+the colour pattern. Without that, either player could read their own answer out
+of the network tab. The guess limit is enforced in the same function, so a
+tampered client cannot award itself extra tries.
 
 `cat database_migration_2.sql` prints it, or `xclip -sel clip < database_migration_2.sql`
 copies it straight to the clipboard.

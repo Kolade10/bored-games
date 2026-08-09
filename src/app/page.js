@@ -1,6 +1,6 @@
 import Link from "next/link";
 import {
-  ArrowRight, Clock, Gauge, Grid3x3, Link2, Paintbrush, PencilLine, Users
+  ArrowRight, Clock, Gauge, Grid3x3, Link2, Paintbrush, PencilLine, Swords, Users
 } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
 import YourRooms from "@/components/YourRooms";
@@ -26,6 +26,17 @@ const GAMES = [
     estimatedTime: '5-10 min',
     accent: 'amber',
     Icon: PencilLine,
+    available: true
+  },
+  {
+    id: 'wordle',
+    title: 'Word Duel',
+    description: 'Wordle, except you each pick the word the other has to crack. Green for right place, amber for right letter.',
+    players: '2 players',
+    difficulty: 'Medium',
+    estimatedTime: '3-8 min',
+    accent: 'leaf',
+    Icon: Swords,
     available: true
   },
   {

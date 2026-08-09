@@ -18,11 +18,35 @@ import {
 } from 'lucide-react';
 import TicTacToeGame from '@/components/TicTacToeGame';
 import NamePlaceThingGame from '@/components/NamePlaceThingGame';
+import WordleGame from '@/components/WordleGame';
 import RoomChat from '@/components/RoomChat';
 
 const GAME_TITLES = {
   'tic-tac-toe': 'Tic Tac Toe',
-  'name-place-thing': 'Name Place Animal Thing'
+  'name-place-thing': 'Name Place Animal Thing',
+  'wordle': 'Word Duel'
+};
+
+const GAME_RULES = {
+  'tic-tac-toe': [
+    'Take turns claiming squares on the 3x3 grid.',
+    'Three in a row wins - across, down or diagonally.',
+    'All nine squares filled with no line is a draw.',
+    'Every round a coin flip decides who goes first.'
+  ],
+  'name-place-thing': [
+    'The round leader picks a letter that has not been used yet.',
+    'Fill in a name, place, animal and thing starting with it.',
+    'You get 60 seconds, or until everyone submits.',
+    'Unique answers score more than ones others also picked.',
+    'Leadership rotates each round.'
+  ],
+  'wordle': [
+    'You each secretly set a real word for the other, 5 to 10 letters.',
+    'You get one guess more than the word is long.',
+    'Green means right letter, right place. Amber means right letter, wrong place.',
+    'Solve it to win; if you both solve it, fewest guesses takes the round.'
+  ]
 };
 
 const MIN_PLAYERS = 2;
@@ -315,6 +339,7 @@ export default function RoomLobby() {
     const game =
       room.game_type === 'tic-tac-toe' ? <TicTacToeGame {...gameProps} /> :
       room.game_type === 'name-place-thing' ? <NamePlaceThingGame {...gameProps} /> :
+      room.game_type === 'wordle' ? <WordleGame {...gameProps} /> :
       null;
 
     if (game) {
@@ -526,21 +551,7 @@ export default function RoomLobby() {
             {gameTitle}
           </h2>
           <ul className="space-y-2 text-sm text-ink-soft">
-            {(room.game_type === 'tic-tac-toe'
-              ? [
-                  'Take turns claiming squares on the 3x3 grid.',
-                  'Three in a row wins - across, down or diagonally.',
-                  'All nine squares filled with no line is a draw.',
-                  'Every round a coin flip decides who goes first.'
-                ]
-              : [
-                  'The round leader picks a letter that has not been used yet.',
-                  'Fill in a name, place, animal and thing starting with it.',
-                  'You get 60 seconds, or until everyone submits.',
-                  'Unique answers score more than ones others also picked.',
-                  'Leadership rotates each round.'
-                ]
-            ).map(rule => (
+            {(GAME_RULES[room.game_type] || []).map(rule => (
               <li key={rule} className="flex gap-2">
                 <span className="w-1.5 h-1.5 rounded-full bg-ink-soft mt-2 shrink-0" />
                 {rule}

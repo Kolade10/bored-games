@@ -7,6 +7,7 @@ share the six-character code, and play in real time.
 
 - **Tic Tac Toe**: Classic 3x3 grid game for two players
 - **Name Place Animal Thing**: Word game with a shared letter and a 60s timer
+- **Word Duel**: Head-to-head Wordle where you each set the other's word
 - **Room System**: Create and join game rooms with unique codes
 - **Real-time Multiplayer**: Live game updates using Supabase realtime
 - **Spectator Mode**: Watch when a room is already full
@@ -97,6 +98,13 @@ Scoring per answer:
 | 5 | Unique answer that could not be verified (proper nouns, dictionary offline) |
 | 3 | Unverified answer another player also gave |
 | 0 | Wrong starting letter, not a real word, or wrong category |
+
+### Word Duel
+- You each secretly set a real word for the other, 5 to 10 letters
+- Guesses allowed = word length + 1, so a 7-letter word gives 8 tries
+- Green is right letter right place, amber is right letter wrong place
+- Solve it to win; if you both solve it, fewest guesses takes the round
+- Both words are validated against the dictionary before they can be locked in
 
 Answers are checked against curated word lists first, then
 [dictionaryapi.dev](https://dictionaryapi.dev). Names and places that are not in
