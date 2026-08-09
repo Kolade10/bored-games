@@ -181,11 +181,9 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
 
       if (deleteError) throw deleteError;
 
-      // Winner starts the next round; a draw keeps the current opener.
+      // Who opens is drawn fresh every round, regardless of the last result.
       const nextFirstPlayerId =
-        gameStatus === 'won'
-          ? playerForSymbol(winner.symbol)?.id
-          : gameSession.first_player_id || orderedPlayers[0]?.id;
+        activePlayers[Math.floor(Math.random() * activePlayers.length)]?.id;
 
       // round_data changes every round so the UPDATE always reaches the other
       // client, which is what tells them to clear their board.
@@ -194,7 +192,6 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
         .update({
           first_player_id: nextFirstPlayerId,
           current_leader_id: nextFirstPlayerId,
-          last_winner_id: null,
           round_data: { round_seq: (gameSession.round_data?.round_seq || 0) + 1 }
         })
         .eq('id', gameSession.id);

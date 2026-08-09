@@ -100,3 +100,17 @@ Answers are checked against curated word lists first, then
 [dictionaryapi.dev](https://dictionaryapi.dev). Names and places that are not in
 either are scored as "unverified" rather than rejected, since no dictionary
 covers every proper noun.
+
+The lists live in [comprehensiveWordLists.js](src/lib/comprehensiveWordLists.js)
+— roughly 1,900 words grouped by first letter, covering all 26 letters in every
+category. Lookups ignore case, accents, hyphens and spacing, and accept plurals
+for animals and things (`foxes` matches `fox`). When adding words, keep them
+lowercase, keep the letter grouping, and re-run:
+
+```bash
+node test-wordlists.mjs
+```
+
+It fails if any letter drops below three words, if there are duplicates, or if
+an entry is not lowercase — a thin letter is one the round leader can pick to
+accidentally score everybody zero.

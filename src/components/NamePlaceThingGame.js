@@ -40,6 +40,7 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
   const [isScoring, setIsScoring] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [saveState, setSaveState] = useState('idle'); // idle | saving | saved | error
 
   const roundNumber = gameSession.current_round;
   const scoringRef = useRef(false);
@@ -47,6 +48,16 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
   // refreshes never overwrite what the player is currently typing.
   const hydratedRoundRef = useRef(null);
   const currentPlayerId = currentPlayer?.id;
+
+  // Autosave bookkeeping: only save what the player actually typed, and keep
+  // the latest values reachable from effects that must flush immediately.
+  const dirtyRef = useRef(false);
+  const myAnswersRef = useRef(EMPTY_ANSWERS);
+  const doneRef = useRef(false);
+  const roundRef = useRef(null);
+  myAnswersRef.current = myAnswers;
+  doneRef.current = hasSubmitted;
+  roundRef.current = round;
 
   const activePlayers = useMemo(
     () => players
@@ -147,10 +158,12 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
       setAnswersByPlayer(answersMap);
 
       const mine = currentPlayerId ? answersMap[currentPlayerId] : null;
-      setHasSubmitted(!!mine);
+      setHasSubmitted(!!mine?.submitted);
       if (hydratedRoundRef.current !== roundData.id) {
         hydratedRoundRef.current = roundData.id;
-        setMyAnswers(mine ? { ...EMPTY_ANSWERS, ...mine } : EMPTY_ANSWERS);
+        // `submitted` is metadata, not an answer - keep it out of the form.
+        const { submitted, ...answers } = mine || {};
+        setMyAnswers({ ...EMPTY_ANSWERS, ...answers });
       }
     } catch (err) {
       console.error('Error loading game data:', err);
@@ -229,7 +242,67 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
     return () => clearInterval(timer);
   }, [phase]);
 
-  const submittedCount = activePlayers.filter(p => answersByPlayer[p.id]).length;
+  /**
+   * Writes the current answers to the round. Called on a debounce while typing
+   * so a round that ends early still scores whatever is in the boxes - pressing
+   * "Done" is only a signal to the others, never what makes answers count.
+   *
+   * `submitted` rides along inside the answers JSON so no extra column is
+   * needed; the scoring loop only ever reads the four category keys.
+   */
+  const saveAnswers = useCallback(async (answers, submitted) => {
+    if (!canPlay || !roundRef.current) return false;
+
+    const { error: writeError } = await supabase
+      .from('player_answers')
+      .upsert(
+        {
+          round_id: roundRef.current.id,
+          player_id: currentPlayerId,
+          answers: { ...answers, submitted }
+        },
+        { onConflict: 'round_id,player_id' }
+      );
+
+    if (writeError) {
+      console.error('Error saving answers:', writeError);
+      setSaveState('error');
+      return false;
+    }
+
+    setSaveState('saved');
+    setAnswersByPlayer(prev => ({
+      ...prev,
+      [currentPlayerId]: { ...answers, submitted }
+    }));
+    return true;
+  }, [canPlay, currentPlayerId]);
+
+  // Autosave shortly after typing stops.
+  useEffect(() => {
+    if (phase !== 'playing' || !canPlay || !dirtyRef.current) return;
+
+    setSaveState('saving');
+    const timer = setTimeout(() => {
+      dirtyRef.current = false;
+      saveAnswers(myAnswersRef.current, doneRef.current);
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [myAnswers, phase, canPlay, saveAnswers]);
+
+  // The round just closed - push anything typed in the last moment straight
+  // away rather than waiting out the debounce.
+  useEffect(() => {
+    if (phase === 'reviewing' && dirtyRef.current) {
+      dirtyRef.current = false;
+      saveAnswers(myAnswersRef.current, doneRef.current);
+    }
+  }, [phase, saveAnswers]);
+
+  // "Done" is an explicit choice, not just having typed something - autosaved
+  // rows must not make the round end the moment everyone starts typing.
+  const submittedCount = activePlayers.filter(p => answersByPlayer[p.id]?.submitted).length;
   const everyoneSubmitted =
     activePlayers.length > 0 && submittedCount === activePlayers.length;
 
@@ -240,6 +313,13 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
     setIsScoring(true);
 
     try {
+      // Flush our own pending edits first - whoever stops the round would
+      // otherwise score themselves before their last keystrokes were saved.
+      if (dirtyRef.current) {
+        dirtyRef.current = false;
+        await saveAnswers(myAnswersRef.current, doneRef.current);
+      }
+
       // Only the client that actually flips the row to completed scores the
       // round, so scores are written exactly once no matter who triggers it.
       const { data: stopped, error: stopError } = await supabase
@@ -252,6 +332,10 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
       if (stopError) throw stopError;
 
       if (stopped && stopped.length > 0) {
+        // Other players see the round close and flush whatever they were still
+        // typing. Give those writes a moment to arrive before reading answers,
+        // otherwise the last second of someone's typing is scored as blank.
+        await new Promise(resolve => setTimeout(resolve, 1200));
         await calculateScores(round);
       }
 
@@ -264,7 +348,7 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
       setIsScoring(false);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [round, loadGameData]);
+  }, [round, loadGameData, saveAnswers]);
 
   // The round ends when time runs out or everyone has answered. Every client
   // may fire it; the conditional update above keeps it to a single winner.
@@ -426,35 +510,18 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
     }
   };
 
-  const submitAnswers = async () => {
+  const markDone = async () => {
     if (!canPlay || !round || phase !== 'playing' || busy) return;
 
     setBusy(true);
-    try {
-      const payload = {
-        round_id: round.id,
-        player_id: currentPlayer.id,
-        answers: myAnswers
-      };
-
-      const { error: writeError } = hasSubmitted
-        ? await supabase
-            .from('player_answers')
-            .update({ answers: myAnswers })
-            .eq('round_id', round.id)
-            .eq('player_id', currentPlayer.id)
-        : await supabase.from('player_answers').insert(payload);
-
-      if (writeError) throw writeError;
-
-      setHasSubmitted(true);
-      setAnswersByPlayer(prev => ({ ...prev, [currentPlayer.id]: myAnswers }));
-    } catch (err) {
-      console.error('Error submitting answers:', err);
-      setError('Could not submit your answers. Please try again.');
-    } finally {
-      setBusy(false);
+    dirtyRef.current = false;
+    setHasSubmitted(true);
+    const ok = await saveAnswers(myAnswers, true);
+    if (!ok) {
+      setHasSubmitted(false);
+      setError('Could not save your answers. Please try again.');
     }
+    setBusy(false);
   };
 
   const nextRound = async () => {
@@ -649,9 +716,22 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
             {/* Answers */}
             {canPlay && (
               <div className="card p-6">
-                <h2 className="text-xl mb-4">
-                  Words starting with <span className="text-amber">{letter}</span>
-                </h2>
+                <div className="flex items-center justify-between gap-3 mb-4 flex-wrap">
+                  <h2 className="text-xl">
+                    Words starting with <span className="text-amber">{letter}</span>
+                  </h2>
+                  <span className="text-xs font-bold text-ink-soft flex items-center gap-1.5">
+                    {saveState === 'error' ? (
+                      <><CircleAlert className="w-3.5 h-3.5 text-coral" strokeWidth={2.5} />Not saved</>
+                    ) : saveState === 'saving' ? (
+                      <><Loader className="w-3.5 h-3.5 animate-spin" strokeWidth={2.5} />Saving</>
+                    ) : saveState === 'saved' ? (
+                      <><Check className="w-3.5 h-3.5" strokeWidth={2.5} />Saved</>
+                    ) : (
+                      <>Saved automatically</>
+                    )}
+                  </span>
+                </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
                   {CATEGORIES.map(category => (
                     <label key={category.id} className="block">
@@ -659,26 +739,33 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
                       <input
                         type="text"
                         value={myAnswers[category.id]}
-                        onChange={(e) => setMyAnswers(prev => ({
-                          ...prev,
-                          [category.id]: e.target.value
-                        }))}
+                        onChange={(e) => {
+                          dirtyRef.current = true;
+                          setMyAnswers(prev => ({
+                            ...prev,
+                            [category.id]: e.target.value
+                          }));
+                        }}
                         placeholder={category.placeholder}
                         className="field"
                       />
                     </label>
                   ))}
                 </div>
-                <button onClick={submitAnswers} disabled={busy} className="btn btn-leaf btn-lg w-full">
+                <button
+                  onClick={markDone}
+                  disabled={busy || hasSubmitted}
+                  className="btn btn-leaf btn-lg w-full"
+                >
                   {hasSubmitted
-                    ? <><Check className="w-5 h-5" strokeWidth={3} />Update answers</>
-                    : <><Send className="w-5 h-5" strokeWidth={3} />Submit answers</>}
+                    ? <><Check className="w-5 h-5" strokeWidth={3} />Waiting for the others</>
+                    : <><Send className="w-5 h-5" strokeWidth={3} />I&apos;m done</>}
                 </button>
-                {hasSubmitted && (
-                  <p className="mt-3 text-sm text-center text-ink-soft font-semibold">
-                    Locked in - you can keep editing until the round ends.
-                  </p>
-                )}
+                <p className="mt-3 text-sm text-center text-ink-soft font-semibold">
+                  {hasSubmitted
+                    ? 'Keep editing if you think of something better - changes still count.'
+                    : 'Your answers are saved as you type, so nothing is lost if the round ends early.'}
+                </p>
               </div>
             )}
 
@@ -687,7 +774,9 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
               <h2 className="text-lg mb-4">Players</h2>
               <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 {activePlayers.map(player => {
-                  const done = !!answersByPlayer[player.id];
+                  const entry = answersByPlayer[player.id];
+                  const done = !!entry?.submitted;
+                  const typing = !done && !!entry;
                   return (
                     <li key={player.id} className="panel p-3 flex items-center justify-between gap-3">
                       <span className="font-bold truncate">
@@ -696,10 +785,12 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
                           <span className="text-ink-soft font-semibold"> (you)</span>
                         )}
                       </span>
-                      <span className={`chip shrink-0 ${done ? 'chip-leaf' : 'chip-amber'}`}>
+                      <span className={`chip shrink-0 ${done ? 'chip-leaf' : typing ? 'chip-teal' : 'chip-amber'}`}>
                         {done
                           ? <><Check className="w-3.5 h-3.5" strokeWidth={3} />Done</>
-                          : <><Hourglass className="w-3.5 h-3.5" strokeWidth={2.5} />Thinking</>}
+                          : typing
+                            ? <><PencilLine className="w-3.5 h-3.5" strokeWidth={2.5} />Writing</>
+                            : <><Hourglass className="w-3.5 h-3.5" strokeWidth={2.5} />Thinking</>}
                       </span>
                     </li>
                   );
