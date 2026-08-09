@@ -77,7 +77,7 @@ src/lib/wordValidation.js answer checking for Name Place Animal Thing
 
 ### Tic Tac Toe
 - Two players take turns placing X and O; three in a row wins
-- The first player is chosen at random, then the winner of a round opens the next
+- Who goes first is drawn at random at the start of every round, and plays as X
 - Extra players joining a full room become spectators
 
 ### Name Place Animal Thing

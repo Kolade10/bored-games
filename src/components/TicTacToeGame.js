@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
 import {
-  Circle, CircleAlert, Crown, Eye, Flag, Frown, Grid3x3, Handshake, Hourglass,
-  House, PartyPopper, Play, RotateCcw, Trophy, X
+  Circle, CircleAlert, Eye, Flag, Frown, Grid3x3, Handshake, Hourglass,
+  House, PartyPopper, Play, RotateCcw, Shuffle, Trophy, X
 } from 'lucide-react';
 
 const WINNING_COMBINATIONS = [
@@ -78,9 +78,6 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
     gameStatus === 'playing' &&
     currentPlayerTurn?.id === currentPlayer.id;
 
-  // One client writes the result so the room does not fire N identical updates.
-  const isScorekeeper = activePlayers[0]?.id === currentPlayer?.id;
-
   const loadMoves = useCallback(async () => {
     const { data, error: loadError } = await supabase
       .from('tic_tac_toe_moves')
@@ -126,23 +123,6 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
   useEffect(() => {
     loadMoves();
   }, [gameSession.first_player_id, loadMoves]);
-
-  // Record the winner so the next game can start with them.
-  useEffect(() => {
-    if (gameStatus !== 'won' || !isScorekeeper) return;
-
-    const winnerId = playerForSymbol(winner.symbol)?.id;
-    if (!winnerId || gameSession.last_winner_id === winnerId) return;
-
-    supabase
-      .from('game_sessions')
-      .update({ last_winner_id: winnerId })
-      .eq('id', gameSession.id)
-      .then(({ error: updateError }) => {
-        if (updateError) console.error('Error recording winner:', updateError);
-      });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gameStatus, winner, isScorekeeper, gameSession.id, gameSession.last_winner_id]);
 
   const makeMove = async (position) => {
     if (!isMyTurn || board[position] || busy) return;
@@ -351,12 +331,10 @@ export default function TicTacToeGame({ room, players, currentPlayer, gameSessio
         {/* Controls */}
         {gameStatus !== 'playing' && currentPlayer && !currentPlayer.is_spectator && (
           <div className="card p-5 mb-6">
-            {gameStatus === 'won' && (
-              <p className="text-sm text-ink-soft font-semibold mb-4 flex items-center gap-2">
-                <Crown className="w-4 h-4 shrink-0" strokeWidth={2.5} />
-                {playerForSymbol(winner.symbol)?.name} goes first next round
-              </p>
-            )}
+            <p className="text-sm text-ink-soft font-semibold mb-4 flex items-center gap-2">
+              <Shuffle className="w-4 h-4 shrink-0" strokeWidth={2.5} />
+              Whoever goes first next round is drawn at random
+            </p>
             <div className="flex flex-col sm:flex-row gap-3">
               <button onClick={newGame} disabled={busy} className="btn btn-leaf grow">
                 <RotateCcw className="w-4 h-4" strokeWidth={3} />

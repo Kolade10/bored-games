@@ -168,25 +168,11 @@ export default function RoomLobby() {
     setError('');
 
     try {
-      let firstPlayerId;
-
-      if (room.game_type === 'tic-tac-toe') {
-        // The previous winner opens the next game when they are still around.
-        const { data: previousSessions } = await supabase
-          .from('game_sessions')
-          .select('last_winner_id')
-          .eq('room_id', room.id)
-          .eq('status', 'finished')
-          .order('ended_at', { ascending: false })
-          .limit(1);
-
-        const previousWinner = previousSessions?.[0]?.last_winner_id;
-        firstPlayerId = activePlayers.some(p => p.id === previousWinner)
-          ? previousWinner
-          : activePlayers[Math.floor(Math.random() * activePlayers.length)].id;
-      } else {
-        firstPlayerId = activePlayers[0].id;
-      }
+      // Tic Tac Toe draws its opener at random, every round. Name Place Animal
+      // Thing rotates leadership in join order, so it starts with player one.
+      const firstPlayerId = room.game_type === 'tic-tac-toe'
+        ? activePlayers[Math.floor(Math.random() * activePlayers.length)].id
+        : activePlayers[0].id;
 
       const { data: sessionData, error: sessionError } = await supabase
         .from('game_sessions')
@@ -532,7 +518,7 @@ export default function RoomLobby() {
                   'Take turns claiming squares on the 3x3 grid.',
                   'Three in a row wins - across, down or diagonally.',
                   'All nine squares filled with no line is a draw.',
-                  'The winner of a round goes first in the next one.'
+                  'Every round a coin flip decides who goes first.'
                 ]
               : [
                   'The round leader picks a letter that has not been used yet.',

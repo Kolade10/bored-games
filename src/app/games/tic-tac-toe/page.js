@@ -15,9 +15,9 @@ export default function TicTacToe() {
       maxPlayers={2}
       rules={[
         'Create a room and share the code with your opponent.',
-        'The first player is picked at random and plays as X.',
         'Take turns claiming squares. Three in a row wins the round.',
-        'The winner goes first in the next round. Anyone extra can watch.'
+        'Whoever goes first is drawn at random every round, and plays as X.',
+        'Anyone joining a full room can watch.'
       ]}
     />
   );
