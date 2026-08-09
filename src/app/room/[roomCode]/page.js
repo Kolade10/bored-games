@@ -1,14 +1,34 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
-import { supabase, getPlayerName } from '@/lib/supabase';
+import {
+  supabase,
+  getPlayerName,
+  setPlayerName,
+  getRoomPlayerId,
+  setRoomPlayerId,
+  clearRoomPlayerId
+} from '@/lib/supabase';
+import { joinRoomAsPlayer } from '@/lib/rooms';
 import Link from 'next/link';
+import {
+  BookOpen, Check, CircleAlert, Copy, Crown, Dices, Eye, Hourglass, House,
+  Loader, LogOut, Play, RotateCcw, UserPlus, Users
+} from 'lucide-react';
 import TicTacToeGame from '@/components/TicTacToeGame';
 import NamePlaceThingGame from '@/components/NamePlaceThingGame';
 
+const GAME_TITLES = {
+  'tic-tac-toe': 'Tic Tac Toe',
+  'name-place-thing': 'Name Place Animal Thing'
+};
+
+const MIN_PLAYERS = 2;
+
 export default function RoomLobby() {
-  const { roomCode } = useParams();
+  const params = useParams();
+  const roomCode = String(params.roomCode || '').toUpperCase();
   const router = useRouter();
   const [room, setRoom] = useState(null);
   const [players, setPlayers] = useState([]);
@@ -16,93 +36,79 @@ export default function RoomLobby() {
   const [gameSession, setGameSession] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [starting, setStarting] = useState(false);
+  const [joinName, setJoinName] = useState('');
+  const [joining, setJoining] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  useEffect(() => {
+  const loadRoomData = useCallback(async () => {
     if (!roomCode) return;
 
-    const playerName = getPlayerName();
-    if (!playerName) {
-      router.push('/');
-      return;
-    }
+    try {
+      const { data: roomData, error: roomError } = await supabase
+        .from('rooms')
+        .select('*, players (*), game_sessions (*)')
+        .eq('room_code', roomCode)
+        .maybeSingle();
 
-    loadRoomData();
+      if (roomError) throw roomError;
+      if (!roomData) {
+        setError('Room not found. Double-check the code or ask for a new one.');
+        setLoading(false);
+        return;
+      }
+
+      const roomPlayers = roomData.players || [];
+      setRoom(roomData);
+      setPlayers(roomPlayers);
+
+      // Identify by the stored player id first; fall back to the saved name so
+      // players who joined before this was stored are still recognised.
+      const storedId = getRoomPlayerId(roomCode);
+      const savedName = getPlayerName();
+      const me =
+        roomPlayers.find(p => p.id === storedId) ||
+        (savedName
+          ? roomPlayers.find(p => p.name.toLowerCase() === savedName.toLowerCase())
+          : null);
+
+      if (me && me.id !== storedId) setRoomPlayerId(roomCode, me.id);
+      setCurrentPlayer(me || null);
+      setJoinName(prev => prev || savedName);
+
+      const activeSession = roomData.game_sessions?.find(s => s.status !== 'finished');
+
+      // Recover from a room left marked as playing with no live session.
+      if (roomData.status === 'playing' && !activeSession) {
+        await supabase.from('rooms').update({ status: 'waiting' }).eq('id', roomData.id);
+        setRoom(prev => (prev ? { ...prev, status: 'waiting' } : prev));
+      }
+
+      setGameSession(activeSession || null);
+      setError('');
+    } catch (err) {
+      console.error('Error loading room:', err);
+      setError('Failed to load room. Please try again.');
+    } finally {
+      setLoading(false);
+    }
   }, [roomCode]);
+
+  useEffect(() => {
+    loadRoomData();
+  }, [loadRoomData]);
 
   useEffect(() => {
     if (!room?.id) return;
 
-    const channel = setupRealtimeSubscriptions();
-
-    return () => {
-      if (channel) {
-        supabase.removeChannel(channel);
-      }
-    };
-  }, [room?.id]);
-
-  const loadRoomData = async () => {
-    try {
-      // Get room data
-      const { data: roomData, error: roomError } = await supabase
-        .from('rooms')
-        .select(`
-          *,
-          players (*),
-          game_sessions (*)
-        `)
-        .eq('room_code', roomCode)
-        .single();
-
-      if (roomError || !roomData) {
-        setError('Room not found');
-        return;
-      }
-
-      setRoom(roomData);
-      setPlayers(roomData.players || []);
-      
-      // Find current player
-      const playerName = getPlayerName();
-      const currentP = roomData.players.find(p => p.name === playerName);
-      setCurrentPlayer(currentP);
-
-      // Get active game session
-      const activeSession = roomData.game_sessions?.find(s => s.status !== 'finished');
-      
-      // If room is marked as playing but no active session exists, reset room status
-      if (roomData.status === 'playing' && !activeSession) {
-        await supabase
-          .from('rooms')
-          .update({ status: 'waiting' })
-          .eq('id', roomData.id);
-        
-        // Update local room state
-        setRoom(prev => ({ ...prev, status: 'waiting' }));
-      }
-      
-      setGameSession(activeSession);
-
-      setLoading(false);
-    } catch (error) {
-      console.error('Error loading room:', error);
-      setError('Failed to load room');
-      setLoading(false);
-    }
-  };
-
-  const setupRealtimeSubscriptions = () => {
-    // Create a single channel for all subscriptions
-    const roomChannel = supabase
-      .channel(`room-${roomCode}-all`)
+    const channel = supabase
+      .channel(`room-${room.id}`)
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'rooms',
-        filter: `room_code=eq.${roomCode}`
+        filter: `id=eq.${room.id}`
       }, (payload) => {
-        console.log('Room change detected:', payload);
-        // Update room state directly instead of full reload
         if (payload.eventType === 'UPDATE' && payload.new) {
           setRoom(prev => ({ ...prev, ...payload.new }));
         } else {
@@ -113,145 +119,107 @@ export default function RoomLobby() {
         event: '*',
         schema: 'public',
         table: 'players',
-        filter: `room_id=eq.${room?.id}`
-      }, (payload) => {
-        console.log('Player change detected:', payload);
-        loadRoomData(); // Players need full reload to get relationships
+        filter: `room_id=eq.${room.id}`
+      }, () => {
+        // Players carry ordering/spectator state used elsewhere, so reload.
+        loadRoomData();
       })
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'game_sessions',
-        filter: `room_id=eq.${room?.id}`
+        filter: `room_id=eq.${room.id}`
       }, (payload) => {
-        console.log('Game session change detected:', payload);
-        // Update game session state directly
-        if (payload.eventType === 'INSERT' && payload.new) {
-          setGameSession(payload.new);
-        } else if (payload.eventType === 'UPDATE' && payload.new) {
-          setGameSession(payload.new);
-        } else if (payload.eventType === 'DELETE') {
-          setGameSession(null);
-        } else {
+        if (payload.eventType === 'DELETE') {
           loadRoomData();
+          return;
         }
+        const session = payload.new;
+        if (!session) return;
+        setGameSession(session.status === 'finished' ? null : session);
       })
-      .subscribe((status) => {
-        console.log('Realtime subscription status:', status);
-      });
+      .subscribe();
 
-    return roomChannel;
-  };
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [room?.id, loadRoomData]);
+
+  const activePlayers = players
+    .filter(p => !p.is_spectator)
+    .sort((a, b) => (a.player_order || 0) - (b.player_order || 0));
+  const spectators = players.filter(p => p.is_spectator);
+
+  const hasEnoughPlayers = activePlayers.length >= MIN_PLAYERS;
+  const isRoomOwner = !!currentPlayer && activePlayers[0]?.id === currentPlayer.id;
+  const noActiveGameSession = !gameSession || gameSession.status === 'finished';
+  const canStartGame =
+    hasEnoughPlayers &&
+    room?.status === 'waiting' &&
+    !!currentPlayer &&
+    !currentPlayer.is_spectator &&
+    isRoomOwner &&
+    noActiveGameSession;
 
   const startGame = async () => {
-    if (!room || !currentPlayer) {
-      console.error('Cannot start game: missing room or current player', { room, currentPlayer });
-      setError('Cannot start game: missing room or player data');
-      return;
-    }
+    if (!room || !currentPlayer || !canStartGame || starting) return;
 
-    if (!canStartGame) {
-      console.error('Cannot start game: conditions not met');
-      setError('Cannot start game: conditions not met');
-      return;
-    }
-
-    console.log('Starting game...', { 
-      roomId: room.id, 
-      currentPlayerId: currentPlayer.id,
-      activePlayers: activePlayers.length,
-      gameType: room.game_type
-    });
+    setStarting(true);
+    setError('');
 
     try {
-      // Clear any previous errors
-      setError('');
-
-      // For Tic Tac Toe, randomly select the first player for the first round
       let firstPlayerId;
-      let lastWinnerId = null;
-      
+
       if (room.game_type === 'tic-tac-toe') {
-        // Check if there's a previous game session to get the last winner
-        const { data: previousSessions, error: prevError } = await supabase
+        // The previous winner opens the next game when they are still around.
+        const { data: previousSessions } = await supabase
           .from('game_sessions')
-          .select('last_winner_id, round_data')
+          .select('last_winner_id')
           .eq('room_id', room.id)
           .eq('status', 'finished')
           .order('ended_at', { ascending: false })
           .limit(1);
 
-        if (prevError) {
-          console.error('Error checking previous sessions:', prevError);
-        }
-
-        const latestSession = previousSessions?.[0];
-        const previousWinner = latestSession?.last_winner_id || latestSession?.round_data?.last_winner_id;
-        
-        if (previousWinner && activePlayers.find(p => p.id === previousWinner)) {
-          // If there's a previous winner and they're still in the room, they start
-          firstPlayerId = previousWinner;
-          console.log('Previous winner starts:', previousWinner);
-        } else {
-          // Random selection for first game or if previous winner left
-          const randomIndex = Math.floor(Math.random() * activePlayers.length);
-          firstPlayerId = activePlayers[randomIndex].id;
-          console.log('Randomly selected first player:', firstPlayerId, 'from', activePlayers.length, 'players');
-        }
+        const previousWinner = previousSessions?.[0]?.last_winner_id;
+        firstPlayerId = activePlayers.some(p => p.id === previousWinner)
+          ? previousWinner
+          : activePlayers[Math.floor(Math.random() * activePlayers.length)].id;
       } else {
-        // For other games, use the first player as leader
-        const firstPlayer = players.find(p => !p.is_spectator && p.player_order === 1);
-        if (!firstPlayer) {
-          throw new Error('No first player found');
-        }
-        firstPlayerId = firstPlayer.id;
+        firstPlayerId = activePlayers[0].id;
       }
 
-      // Create new game session
       const { data: sessionData, error: sessionError } = await supabase
         .from('game_sessions')
         .insert({
           room_id: room.id,
           current_leader_id: firstPlayerId,
-          max_rounds: room.game_type === 'name-place-thing' ? 999 : 1, // Infinite rounds for name-place-thing
-          status: 'playing',
-          // Store additional data in round_data for now (until migration is applied)
-          round_data: room.game_type === 'tic-tac-toe' ? {
-            first_player_id: firstPlayerId,
-            last_winner_id: lastWinnerId
-          } : null
+          first_player_id: room.game_type === 'tic-tac-toe' ? firstPlayerId : null,
+          max_rounds: room.game_type === 'name-place-thing' ? 999 : 1,
+          status: 'playing'
         })
         .select()
         .single();
 
       if (sessionError) {
-        console.error('Error creating game session:', sessionError);
         throw new Error(`Failed to create game session: ${sessionError.message}`);
       }
 
-      console.log('Game session created:', sessionData);
-
-      // Update room status
       const { error: roomUpdateError } = await supabase
         .from('rooms')
         .update({ status: 'playing' })
         .eq('id', room.id);
 
       if (roomUpdateError) {
-        console.error('Error updating room status:', roomUpdateError);
         throw new Error(`Failed to update room status: ${roomUpdateError.message}`);
       }
 
-      console.log('Room status updated to playing');
-
-      // The real-time subscriptions should handle the state updates
-      // But let's also manually update the local state for immediate feedback
       setRoom(prev => ({ ...prev, status: 'playing' }));
       setGameSession(sessionData);
-
-    } catch (error) {
-      console.error('Error starting game:', error);
-      setError(`Failed to start game: ${error.message}`);
+    } catch (err) {
+      console.error('Error starting game:', err);
+      setError(err.message);
+    } finally {
+      setStarting(false);
     }
   };
 
@@ -259,336 +227,327 @@ export default function RoomLobby() {
     if (!room) return;
 
     try {
-      // End any active game sessions
       await supabase
         .from('game_sessions')
         .update({ status: 'finished', ended_at: new Date().toISOString() })
         .eq('room_id', room.id)
         .neq('status', 'finished');
 
-      // Reset room status
-      await supabase
-        .from('rooms')
-        .update({ status: 'waiting' })
-        .eq('id', room.id);
+      await supabase.from('rooms').update({ status: 'waiting' }).eq('id', room.id);
 
-      // Reload room data
       await loadRoomData();
-    } catch (error) {
-      console.error('Error resetting room:', error);
+    } catch (err) {
+      console.error('Error resetting room:', err);
       setError('Failed to reset room');
     }
   };
 
   const leaveRoom = async () => {
-    if (!currentPlayer) return;
+    if (!currentPlayer) {
+      router.push('/');
+      return;
+    }
 
     try {
-      await supabase
-        .from('players')
-        .delete()
-        .eq('id', currentPlayer.id);
-
+      await supabase.from('players').delete().eq('id', currentPlayer.id);
+      clearRoomPlayerId(roomCode);
       router.push('/');
-    } catch (error) {
-      console.error('Error leaving room:', error);
+    } catch (err) {
+      console.error('Error leaving room:', err);
+      setError('Failed to leave room');
     }
   };
 
-  const copyRoomCode = () => {
-    navigator.clipboard.writeText(roomCode);
-    // You could add a toast notification here
+  const handleJoin = async (e) => {
+    e.preventDefault();
+    const name = joinName.trim();
+    if (name.length < 2) {
+      setError('Name must be at least 2 characters long');
+      return;
+    }
+
+    setJoining(true);
+    setError('');
+
+    try {
+      const me = await joinRoomAsPlayer(room, players, name);
+      setPlayerName(name);
+      setCurrentPlayer(me);
+      await loadRoomData();
+    } catch (err) {
+      console.error('Error joining room:', err);
+      setError(err.message || 'Failed to join room');
+    } finally {
+      setJoining(false);
+    }
+  };
+
+  const copyRoomCode = async () => {
+    try {
+      await navigator.clipboard.writeText(roomCode);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Clipboard access can be denied - the code is on screen anyway.
+    }
   };
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-12 h-12 border-4 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-slate-600 dark:text-slate-400">Loading room...</p>
+      <div className="min-h-screen flex items-center justify-center px-4">
+        <div className="card p-8 text-center">
+          <Loader className="w-8 h-8 mx-auto mb-3 animate-spin" strokeWidth={2.5} />
+          <p className="font-bold">Loading room...</p>
         </div>
       </div>
     );
   }
 
-  if (error) {
+  if (!room) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 flex items-center justify-center">
-        <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 shadow-lg text-center max-w-md">
-          <div className="text-red-500 text-4xl mb-4">❌</div>
-          <h2 className="text-2xl font-bold text-slate-900 dark:text-white mb-4">Room Error</h2>
-          <p className="text-slate-600 dark:text-slate-400 mb-6">{error}</p>
-          <Link
-            href="/"
-            className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 
-                     text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 hover:scale-105"
-          >
-            Back to Home
+      <div className="min-h-screen flex items-center justify-center px-4">
+        <div className="card p-8 text-center max-w-md">
+          <span className="w-12 h-12 rounded-xl bg-coral border-2 border-line flex items-center justify-center mx-auto mb-4">
+            <CircleAlert className="w-6 h-6 text-[var(--on-coral)]" strokeWidth={2.5} />
+          </span>
+          <h1 className="text-2xl mb-2">Can&apos;t open this room</h1>
+          <p className="text-ink-soft mb-6">{error || 'Room not found'}</p>
+          <Link href="/" className="btn btn-amber">
+            <House className="w-4 h-4" strokeWidth={3} />
+            Back to games
           </Link>
         </div>
       </div>
     );
   }
 
-  // If there's an active game session, show the game
-  if (gameSession && gameSession.status === 'playing') {
-    if (room.game_type === 'tic-tac-toe') {
-      return (
-        <TicTacToeGame 
-          room={room}
-          players={players}
-          currentPlayer={currentPlayer}
-          gameSession={gameSession}
-        />
-      );
-    } else if (room.game_type === 'name-place-thing') {
-      return (
-        <NamePlaceThingGame 
-          room={room}
-          players={players}
-          currentPlayer={currentPlayer}
-          gameSession={gameSession}
-        />
-      );
-    }
+  // A live session takes over the screen for everyone in the room.
+  if (currentPlayer && gameSession && gameSession.status === 'playing') {
+    const gameProps = { room, players, currentPlayer, gameSession };
+    if (room.game_type === 'tic-tac-toe') return <TicTacToeGame {...gameProps} />;
+    if (room.game_type === 'name-place-thing') return <NamePlaceThingGame {...gameProps} />;
   }
 
-  // Show lobby
-  const activePlayers = players.filter(p => !p.is_spectator);
-  const spectators = players.filter(p => p.is_spectator);
-  
-  // More robust canStartGame logic
-  const minPlayers = room.game_type === 'tic-tac-toe' ? 2 : 2;
-  const hasEnoughPlayers = activePlayers.length >= minPlayers;
-  const isRoomWaiting = room.status === 'waiting';
-  const isCurrentPlayerActive = currentPlayer && !currentPlayer.is_spectator;
-  const isRoomOwner = currentPlayer && currentPlayer.player_order === 1; // Only room owner can start games
-  const noActiveGameSession = !gameSession || gameSession.status === 'finished';
-  
-  const canStartGame = hasEnoughPlayers && 
-                      isRoomWaiting && 
-                      isCurrentPlayerActive &&
-                      isRoomOwner && // Add room owner check
-                      noActiveGameSession;
-
-  // Debug logging
-  console.log('Debug Room Lobby:', {
-    activePlayers: activePlayers.length,
-    minPlayers,
-    hasEnoughPlayers,
-    gameType: room.game_type,
-    roomStatus: room.status,
-    isRoomWaiting,
-    currentPlayer: currentPlayer,
-    isCurrentPlayerActive,
-    isRoomOwner,
-    gameSession: gameSession,
-    gameSessionStatus: gameSession?.status,
-    noActiveGameSession,
-    canStartGame,
-  });
+  const gameTitle = GAME_TITLES[room.game_type] || room.game_type;
+  const isFull = activePlayers.length >= room.max_players;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
-      {/* Header */}
-      <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <Link href="/" className="flex items-center space-x-3 hover:opacity-75 transition-opacity">
-              <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl p-2">
-                <span className="text-white text-xl font-bold">🎮</span>
-              </div>
-              <span className="text-xl font-bold text-slate-900 dark:text-white">BoredGame</span>
-            </Link>
-            <div className="text-center">
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Room {roomCode}</h1>
-              <p className="text-sm text-slate-600 dark:text-slate-400">
-                {room.game_type === 'tic-tac-toe' ? 'Tic Tac Toe' : 'Name Place Animal Thing'}
-              </p>
-            </div>
-          </div>
+    <div className="min-h-screen">
+      <header className="bg-surface border-b-2 border-line">
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4">
+          <Link href="/" className="flex items-center gap-3">
+            <span className="w-10 h-10 rounded-xl bg-amber border-2 border-line flex items-center justify-center">
+              <Dices className="w-5 h-5 text-[var(--on-amber)]" strokeWidth={2.5} />
+            </span>
+            <span className="text-lg font-extrabold tracking-tight hidden sm:inline">BoredGame</span>
+          </Link>
+          <span className="chip chip-teal">{gameTitle}</span>
         </div>
       </header>
 
-      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl p-8">
-          {/* Room Info */}
-          <div className="text-center mb-8">
-            <div className="inline-flex items-center space-x-3 bg-blue-50 dark:bg-blue-900/20 px-6 py-3 rounded-2xl mb-4">
-              <span className="text-2xl">🏠</span>
-              <div>
-                <div className="font-mono text-2xl font-bold text-blue-600 dark:text-blue-400">{roomCode}</div>
-                <div className="text-xs text-slate-600 dark:text-slate-400">Room Code</div>
-              </div>
-              <button
-                onClick={copyRoomCode}
-                className="text-blue-600 hover:text-blue-800 dark:text-blue-400 dark:hover:text-blue-200"
-                title="Copy room code"
-              >
-                📋
-              </button>
-            </div>
-            <p className="text-slate-600 dark:text-slate-400">
-              Share this code with friends to invite them to play!
+      <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-10">
+        {/* Room code - the thing people came here to share */}
+        <div className="card p-6 mb-6 text-center">
+          <p className="text-sm font-bold text-ink-soft mb-3">Share this code to invite people</p>
+          <div className="flex items-center justify-center gap-3 flex-wrap">
+            <span className="font-mono text-4xl sm:text-5xl font-extrabold tracking-[0.25em] pl-[0.25em]">
+              {roomCode}
+            </span>
+            <button onClick={copyRoomCode} className="btn btn-quiet btn-sm" type="button">
+              {copied
+                ? <><Check className="w-4 h-4" strokeWidth={3} />Copied</>
+                : <><Copy className="w-4 h-4" strokeWidth={3} />Copy</>}
+            </button>
+          </div>
+        </div>
+
+        {/* Join form for anyone opening the room without a seat */}
+        {!currentPlayer && (
+          <form onSubmit={handleJoin} className="card p-6 mb-6">
+            <h2 className="text-xl mb-1">Join this room</h2>
+            <p className="text-sm text-ink-soft mb-4">
+              {isFull
+                ? 'The room is full, so you will join as a spectator.'
+                : 'Pick a name to take a seat.'}
             </p>
-          </div>
-
-          {/* Players List */}
-          <div className="mb-8">
-            <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-4">
-              Players ({activePlayers.length}/{room.max_players})
-            </h3>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
-              {activePlayers.map((player, index) => (
-                <div
-                  key={player.id}
-                  className={`p-4 rounded-xl border-2 ${
-                    player.id === currentPlayer?.id
-                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                      : 'border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center space-x-3">
-                    <div className="w-10 h-10 bg-gradient-to-r from-green-500 to-emerald-500 rounded-full flex items-center justify-center text-white font-bold">
-                      {player.name.charAt(0).toUpperCase()}
-                    </div>
-                    <div>
-                      <div className="font-semibold text-slate-900 dark:text-white">
-                        {player.name}
-                        {player.id === currentPlayer?.id && ' (You)'}
-                      </div>
-                      <div className="text-xs text-slate-500 dark:text-slate-400">
-                        Player {player.player_order}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {spectators.length > 0 && (
-              <>
-                <h4 className="text-lg font-bold text-slate-900 dark:text-white mb-3">
-                  Spectators ({spectators.length})
-                </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                  {spectators.map((spectator) => (
-                    <div
-                      key={spectator.id}
-                      className={`p-3 rounded-lg border ${
-                        spectator.id === currentPlayer?.id
-                          ? 'border-blue-300 bg-blue-50 dark:bg-blue-900/20'
-                          : 'border-slate-200 dark:border-slate-600 bg-slate-50 dark:bg-slate-700'
-                      }`}
-                    >
-                      <div className="flex items-center space-x-2">
-                        <span className="text-lg">👁️</span>
-                        <span className="font-medium text-slate-900 dark:text-white">
-                          {spectator.name}
-                          {spectator.id === currentPlayer?.id && ' (You)'}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-
-          {/* Game Controls */}
-          <div className="text-center space-y-4">
-            {/* Enhanced Debug Info */}
-            <div className="text-xs text-slate-500 p-3 bg-slate-100 dark:bg-slate-700 rounded">
-              <div>Players: {activePlayers.length}/{room.max_players} (Min: {minPlayers})</div>
-              <div>Room Status: {room.status} (Waiting: {isRoomWaiting.toString()})</div>
-              <div>Game Session: {gameSession ? `${gameSession.status}` : 'None'} (No Active: {noActiveGameSession.toString()})</div>
-              <div>Current Player: {currentPlayer?.name} (Active: {isCurrentPlayerActive.toString()}, Owner: {isRoomOwner.toString()})</div>
-              <div>Can Start: {canStartGame.toString()}</div>
-            </div>
-            
-            {canStartGame && (
+            <div className="flex flex-col sm:flex-row gap-3">
+              <input
+                type="text"
+                value={joinName}
+                onChange={(e) => setJoinName(e.target.value)}
+                placeholder="Your name"
+                maxLength={50}
+                className="field"
+              />
               <button
-                onClick={startGame}
-                disabled={!canStartGame}
-                className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 
-                         disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed
-                         text-white font-bold py-4 px-8 rounded-xl transition-all duration-200 hover:scale-105 shadow-lg"
+                type="submit"
+                disabled={joining || joinName.trim().length < 2}
+                className="btn btn-amber shrink-0"
               >
-                🎮 Start Game
+                {joining
+                  ? <><Loader className="w-4 h-4 animate-spin" strokeWidth={3} />Joining</>
+                  : <><UserPlus className="w-4 h-4" strokeWidth={3} />Join</>}
               </button>
-            )}
+            </div>
+          </form>
+        )}
 
-            {!canStartGame && room.status === 'waiting' && noActiveGameSession && (
-              <div className="text-slate-600 dark:text-slate-400">
-                {!hasEnoughPlayers 
-                  ? `Waiting for ${minPlayers} players to start... (${activePlayers.length}/${minPlayers})`
-                  : !isCurrentPlayerActive 
-                    ? 'Only players can start the game'
+        {/* Players */}
+        <div className="card p-6 mb-6">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <h2 className="text-xl">Players</h2>
+            <span className="chip">
+              <Users className="w-4 h-4" strokeWidth={2.5} />
+              {activePlayers.length}/{room.max_players}
+            </span>
+          </div>
+
+          <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {activePlayers.map((player, index) => (
+              <li
+                key={player.id}
+                className={`panel p-4 flex items-center gap-3 ${
+                  player.id === currentPlayer?.id ? 'bg-amber-soft' : ''
+                }`}
+              >
+                <span className="w-10 h-10 rounded-lg bg-surface border-2 border-line shrink-0
+                                 flex items-center justify-center font-extrabold">
+                  {player.name.charAt(0).toUpperCase()}
+                </span>
+                <div className="min-w-0">
+                  <p className="font-bold truncate">
+                    {player.name}
+                    {player.id === currentPlayer?.id && (
+                      <span className="text-ink-soft font-semibold"> (you)</span>
+                    )}
+                  </p>
+                  <p className="text-xs text-ink-soft font-semibold flex items-center gap-1">
+                    {index === 0
+                      ? <><Crown className="w-3.5 h-3.5" strokeWidth={2.5} />Room owner</>
+                      : `Player ${player.player_order}`}
+                  </p>
+                </div>
+              </li>
+            ))}
+
+            {/* Empty seats make the wait legible */}
+            {Array.from({ length: Math.max(0, room.max_players - activePlayers.length) }).map((_, i) => (
+              <li
+                key={`empty-${i}`}
+                className="panel p-4 flex items-center gap-3 border-dashed opacity-70"
+              >
+                <span className="w-10 h-10 rounded-lg border-2 border-dashed border-line shrink-0
+                                 flex items-center justify-center">
+                  <UserPlus className="w-4 h-4 text-ink-soft" strokeWidth={2.5} />
+                </span>
+                <p className="text-sm font-bold text-ink-soft">Waiting for a player</p>
+              </li>
+            ))}
+          </ul>
+
+          {spectators.length > 0 && (
+            <div className="mt-5 pt-5 border-t-2 border-line">
+              <h3 className="text-sm mb-3 flex items-center gap-2">
+                <Eye className="w-4 h-4" strokeWidth={2.5} />
+                Watching ({spectators.length})
+              </h3>
+              <div className="flex flex-wrap gap-2">
+                {spectators.map(spectator => (
+                  <span key={spectator.id} className="chip">
+                    {spectator.name}
+                    {spectator.id === currentPlayer?.id && ' (you)'}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Controls */}
+        <div className="card p-6 mb-6">
+          {error && (
+            <p className="mb-4 flex items-center gap-2 text-sm font-bold text-coral">
+              <CircleAlert className="w-4 h-4 shrink-0" strokeWidth={2.5} />
+              {error}
+            </p>
+          )}
+
+          {canStartGame ? (
+            <button onClick={startGame} disabled={starting} className="btn btn-leaf btn-lg w-full mb-4">
+              {starting
+                ? <><Loader className="w-5 h-5 animate-spin" strokeWidth={3} />Starting...</>
+                : <><Play className="w-5 h-5" strokeWidth={3} />Start game</>}
+            </button>
+          ) : (
+            currentPlayer && noActiveGameSession && (
+              <p className="panel p-4 mb-4 text-sm font-bold text-ink-soft flex items-center gap-2">
+                <Hourglass className="w-4 h-4 shrink-0" strokeWidth={2.5} />
+                {!hasEnoughPlayers
+                  ? `Waiting for players (${activePlayers.length}/${MIN_PLAYERS})`
+                  : currentPlayer.is_spectator
+                    ? 'You are watching - the room owner starts the game'
                     : !isRoomOwner
-                      ? 'Only the room owner can start the game'
-                    : 'Ready to start!'
-                }
-              </div>
-            )}
+                      ? `Waiting for ${activePlayers[0]?.name} to start`
+                      : 'Ready when you are'}
+              </p>
+            )
+          )}
 
-            {gameSession && (
-              <div className="text-blue-600 dark:text-blue-400 font-medium">
-                Game session active (Status: {gameSession.status})
-              </div>
-            )}
+          {gameSession && gameSession.status === 'playing' && !currentPlayer && (
+            <p className="panel p-4 mb-4 text-sm font-bold flex items-center gap-2">
+              <Play className="w-4 h-4 shrink-0" strokeWidth={2.5} />
+              A game is in progress - join above to watch or play.
+            </p>
+          )}
 
-            <div className="flex flex-col sm:flex-row gap-4 justify-center">
-              <button
-                onClick={leaveRoom}
-                className="bg-red-500 hover:bg-red-600 text-white font-bold py-3 px-6 rounded-lg 
-                         transition-all duration-200 hover:scale-105"
-              >
-                🚪 Leave Room
+          <div className="flex flex-wrap gap-3">
+            {currentPlayer && (
+              <button onClick={leaveRoom} className="btn btn-quiet">
+                <LogOut className="w-4 h-4" strokeWidth={3} />
+                Leave room
               </button>
-              <Link
-                href="/"
-                className="bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 
-                         text-slate-800 dark:text-white font-bold py-3 px-6 rounded-lg transition-all 
-                         duration-200 hover:scale-105 text-center"
-              >
-                🏠 Back to Home
-              </Link>
-            </div>
-
-            {/* Reset Room Button for debugging */}
-            {(room.status === 'playing' && noActiveGameSession) && (
-              <div className="mt-4">
-                <button
-                  onClick={resetRoom}
-                  className="bg-orange-500 hover:bg-orange-600 text-white font-bold py-2 px-4 rounded-lg text-sm"
-                >
-                  🔄 Reset Room (Fix Stuck State)
-                </button>
-              </div>
+            )}
+            <Link href="/" className="btn btn-quiet">
+              <House className="w-4 h-4" strokeWidth={3} />
+              All games
+            </Link>
+            {isRoomOwner && room.status === 'playing' && noActiveGameSession && (
+              <button onClick={resetRoom} className="btn btn-coral">
+                <RotateCcw className="w-4 h-4" strokeWidth={3} />
+                Reset room
+              </button>
             )}
           </div>
+        </div>
 
-          {/* Game Rules */}
-          <div className="mt-8 p-6 bg-slate-50 dark:bg-slate-700 rounded-2xl">
-            <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-3">
-              {room.game_type === 'tic-tac-toe' ? 'Tic Tac Toe Rules:' : 'Name Place Animal Thing Rules:'}
-            </h3>
-            {room.game_type === 'tic-tac-toe' ? (
-              <ul className="text-slate-700 dark:text-slate-300 space-y-2 text-sm">
-                <li>• Players take turns placing X&apos;s and O&apos;s on the 3x3 grid</li>
-                <li>• First player to get 3 in a row (horizontal, vertical, or diagonal) wins!</li>
-                <li>• If all 9 squares are filled with no winner, it&apos;s a draw</li>
-              </ul>
-            ) : (
-              <ul className="text-slate-700 dark:text-slate-300 space-y-2 text-sm">
-                <li>• Round leader picks a letter (can&apos;t reuse letters from previous rounds)</li>
-                <li>• Fill in Name, Place, Animal, and Thing starting with that letter</li>
-                <li>• You have 60 seconds unless the leader stops the round early</li>
-                <li>• Unique answers get 10 points, duplicate answers get 5 points</li>
-                <li>• Leadership rotates each round - player with most points after 3 rounds wins!</li>
-              </ul>
-            )}
-          </div>
+        {/* Rules */}
+        <div className="panel p-6">
+          <h2 className="text-lg mb-3 flex items-center gap-2">
+            <BookOpen className="w-5 h-5" strokeWidth={2.5} />
+            {gameTitle}
+          </h2>
+          <ul className="space-y-2 text-sm text-ink-soft">
+            {(room.game_type === 'tic-tac-toe'
+              ? [
+                  'Take turns claiming squares on the 3x3 grid.',
+                  'Three in a row wins - across, down or diagonally.',
+                  'All nine squares filled with no line is a draw.',
+                  'The winner of a round goes first in the next one.'
+                ]
+              : [
+                  'The round leader picks a letter that has not been used yet.',
+                  'Fill in a name, place, animal and thing starting with it.',
+                  'You get 60 seconds, or until everyone submits.',
+                  'Unique answers score more than ones others also picked.',
+                  'Leadership rotates each round.'
+                ]
+            ).map(rule => (
+              <li key={rule} className="flex gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-ink-soft mt-2 shrink-0" />
+                {rule}
+              </li>
+            ))}
+          </ul>
         </div>
       </div>
     </div>

@@ -1,114 +1,101 @@
-# BoredGame - Supabase Setup Instructions
+# BoredGame - Supabase Setup
 
-## 🗄️ Database Setup
+Everything in the app runs through Supabase: rooms, players, game state and the
+realtime sync between clients. Without the steps below the games will load but
+nothing multiplayer will work.
 
-**IMPORTANT: You need to run the SQL commands in your Supabase dashboard before the multiplayer features will work.**
+## 1. Get the Supabase project
 
-### Step 1: Access Supabase SQL Editor
-1. Go to [supabase.com](https://supabase.com) and sign in
-2. Open your project: `lecvxldydknhytsjzaju`
-3. Click on "SQL Editor" in the left sidebar
-4. Click "New Query"
+If you already have the project, skip to step 2. Otherwise create one at
+[supabase.com](https://supabase.com). Either way you need:
 
-### Step 2: Run the Database Schema
-1. Copy all the SQL commands from `database_schema.sql`
-2. Paste them into the SQL Editor
-3. Click "Run" to execute the commands
+- **Project URL** - Project Settings → API → Project URL
+- **anon public key** - Project Settings → API → Project API keys
+  (newer projects show this as **Publishable key**, `sb_publishable_...`)
 
-This will create:
-- **Tables**: rooms, players, game_sessions, rounds, player_answers, scores, tic_tac_toe_moves
-- **Indexes**: For better performance
-- **Row Level Security**: With open policies for now
-- **Realtime**: Enabled for all tables
-- **Functions**: For cleanup and activity tracking
-- **Triggers**: For automatic updates
+> Supabase pauses free-tier projects after a stretch of inactivity, and a
+> paused project stops resolving in DNS entirely - `fetch failed` /
+> `ENOTFOUND`, not a clean error. If the app suddenly cannot reach the
+> database, check the dashboard for a **Restore project** button before
+> assuming anything is wrong with the code.
 
-### Step 3: Verify Setup
-After running the SQL, you should see the following tables in your database:
-- `rooms`
-- `players` 
-- `game_sessions`
-- `rounds`
-- `player_answers`
-- `scores`
-- `tic_tac_toe_moves`
+## 2. Configure the app
 
-### Step 4: Test the Application
-1. Start the dev server: `npm run dev`
-2. Navigate to `http://localhost:3000`
-3. Click on a game (Tic Tac Toe or Name Place Animal Thing)
-4. Create a room or join with a room code
-5. Test multiplayer functionality
+```bash
+cp .env.example .env.local
+```
 
-## 🎮 Features Implemented
+Fill in both values:
 
-### ✅ Room Management
-- Auto-generated 6-character room codes
-- Player limits (2 for Tic Tac Toe, 2-6 for Name Place Animal Thing)
-- Spectator support when rooms are full
-- Real-time player list updates
-- Automatic room cleanup after 1 hour of inactivity
+```
+NEXT_PUBLIC_SUPABASE_URL=https://<your-project-ref>.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=<your-anon-key>
+```
 
-### ✅ User Management
-- Local storage for player names
-- No authentication required
-- Unique names per room
-- Reconnection support
+The app reads these at build time and throws a clear error if either is
+missing. When you deploy (Vercel or otherwise), set the same two variables in
+the hosting environment.
 
-### ✅ Tic Tac Toe
-- Real-time multiplayer gameplay
-- Turn-based system
-- Win/draw detection
-- New round capability
-- Spectator viewing
+> The anon key used to be hardcoded in `src/lib/supabase.js`, so it is in this
+> repo's git history. Anon keys are meant to be public, but the RLS policies
+> here are wide open, so anyone with the key can delete any room. If the repo
+> is ever public, rotate the key (Project Settings → API) and update
+> `.env.local`.
 
-### ✅ Name Place Animal Thing
-- Round-based gameplay (3 rounds default)
-- Rotating leadership system
-- Leader selects letters (no repeats)
-- 60-second timer with leader stop capability
-- Real-time answer submission
-- Automatic scoring:
-  - Unique answers: 10 points
-  - Duplicate answers: 5 points
-- Round-by-round score tracking
-- Final leaderboard
+## 3. Run the SQL
 
-### ✅ Real-time Features
-- Live player actions
-- Synchronized game state
-- Real-time score updates
-- Instant room updates
-- Automatic reconnection
+In the Supabase dashboard → SQL Editor → New query. Paste the **contents** of
+each file (not the filename) and hit Run:
 
-### ✅ Game Flow
-- Room lobby with player management
-- Game session management
-- Score persistence
-- Game history (cleared with room)
-- Next round/end game options
+1. **`database_schema.sql`** - creates the tables, indexes, RLS policies,
+   realtime publication, cleanup function and triggers. Skip this on a database
+   that already has the tables; it is not idempotent and will error on
+   `CREATE TABLE`.
+2. **`database_migration_2.sql`** - required, on new and existing databases
+   alike. It is idempotent and safe to re-run.
 
-## 🚀 Ready to Play!
+`cat database_migration_2.sql` prints it, or `xclip -sel clip < database_migration_2.sql`
+copies it straight to the clipboard.
 
-Once you've run the database setup, your multiplayer BoredGame platform is fully functional! Players can:
+(`database_migration.sql` is the older one-off that added two columns to
+`game_sessions`; `database_migration_2.sql` includes it, so you can skip it.)
 
-1. **Create or join rooms** with room codes
-2. **Play Tic Tac Toe** in real-time with another player
-3. **Play Name Place Animal Thing** with 2-6 players
-4. **Take turns as round leaders** picking letters
-5. **Submit answers** within time limits
-6. **View live scores** and leaderboards
-7. **Start new rounds** or end games as desired
+### What migration 2 does and why it matters
 
-The application handles all edge cases like player disconnections, room cleanup, and real-time synchronization automatically using Supabase's real-time capabilities.
+| Change | Without it |
+| --- | --- |
+| `REPLICA IDENTITY FULL` on all game tables | Postgres only sends the primary key for `DELETE`s, so realtime subscriptions filtered by `session_id` / `room_id` never fire. The Tic Tac Toe board does not clear for the other player after "New Round", and players who leave stay in the list. |
+| Unique index on `scores (session_id, player_id, round_number)` | Every client that reaches the end of a round writes its own score row, multiplying everyone's totals. |
+| Unique index on `player_answers (round_id, player_id)` | A double submit creates two answer rows for one player. |
+| Unique index on `rounds (session_id, round_number)` | Two rounds can exist for the same round number, which breaks loading the round. |
+| Unique indexes on `tic_tac_toe_moves` | Two players clicking simultaneously can both claim the same square. |
+| Realtime publication check | Tables added later are not broadcast at all. |
 
-## 🔧 Development Notes
+### Verify realtime is on
 
-- All game state is managed in Supabase
-- Real-time subscriptions keep all players synchronized
-- Local storage handles player name persistence
-- Room codes are unique and auto-generated
-- Scoring algorithm is implemented server-side for fairness
-- Cleanup functions prevent database bloat
+Database → Replication → `supabase_realtime` should list all seven tables:
+`rooms`, `players`, `game_sessions`, `rounds`, `player_answers`, `scores`,
+`tic_tac_toe_moves`.
 
-Enjoy your multiplayer gaming platform! 🎮
+## 4. Check the connection
+
+```bash
+npm run dev
+```
+
+Open <http://localhost:3000/database-test> - every table should report ✅.
+
+## 5. Play
+
+1. Open <http://localhost:3000>, pick a game, create a room.
+2. Open the same room code in a second browser (or a private window) and join.
+3. The room owner (first player to join) starts the game.
+
+## Security note
+
+The RLS policies from `database_schema.sql` are `USING (true)` - anyone holding
+the anon key can read and write every row, including deleting other people's
+rooms. That is fine for a hobby project among friends, but it is the first
+thing to tighten if this ever goes public. Doing it properly needs some notion
+of identity (Supabase anonymous auth is the lightest option) so policies can
+scope writes to the row's own player.

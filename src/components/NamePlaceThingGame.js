@@ -1,1108 +1,912 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { batchValidateWords } from '@/lib/wordValidation';
 import Link from 'next/link';
+import {
+  ArrowLeft, ArrowRight, BookOpen, Check, CircleAlert, CircleStop, Flag,
+  Hourglass, House, Loader, PencilLine, Send, Timer, Trophy
+} from 'lucide-react';
+
+const CATEGORIES = [
+  { id: 'name', label: 'Name', placeholder: 'e.g., Alice, Bob' },
+  { id: 'place', label: 'Place', placeholder: 'e.g., Amsterdam, Boston' },
+  { id: 'animal', label: 'Animal', placeholder: 'e.g., Ant, Bear' },
+  { id: 'thing', label: 'Thing', placeholder: 'e.g., Apple, Book' }
+];
+
+const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+
+const EMPTY_ANSWERS = { name: '', place: '', animal: '', thing: '' };
+
+const POINTS = {
+  UNIQUE_VALID: 15,
+  SHARED_VALID: 10,
+  UNIQUE_UNVERIFIED: 5,
+  SHARED_UNVERIFIED: 3
+};
 
 export default function NamePlaceThingGame({ room, players, currentPlayer, gameSession }) {
-  const [currentRound, setCurrentRound] = useState(null);
-  const [gameState, setGameState] = useState('waiting'); // 'waiting', 'letter_selection', 'playing', 'reviewing', 'finished'
-  const [timeLeft, setTimeLeft] = useState(60);
-  const [selectedLetter, setSelectedLetter] = useState('');
-  const [usedLetters, setUsedLetters] = useState([]);
-  const [playerAnswers, setPlayerAnswers] = useState({});
-  const [currentAnswers, setCurrentAnswers] = useState({
-    name: '',
-    place: '',
-    animal: '',
-    thing: ''
-  });
+  const [round, setRound] = useState(null);
+  const [answersByPlayer, setAnswersByPlayer] = useState({});
+  const [myAnswers, setMyAnswers] = useState(EMPTY_ANSWERS);
   const [hasSubmitted, setHasSubmitted] = useState(false);
-  const [scores, setScores] = useState({});
+  const [totalScores, setTotalScores] = useState({});
   const [roundScores, setRoundScores] = useState({});
-  const [scoreBreakdowns, setScoreBreakdowns] = useState({});
-  const [isTransitioning, setIsTransitioning] = useState(false);
-  const [isCalculatingScores, setIsCalculatingScores] = useState(false);
+  const [breakdowns, setBreakdowns] = useState({});
+  const [playedLetters, setPlayedLetters] = useState([]);
+  const [now, setNow] = useState(() => Date.now());
+  const [isScoring, setIsScoring] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
-  const activePlayers = players.filter(p => !p.is_spectator).sort((a, b) => a.player_order - b.player_order);
-  
-  // Determine current leader - use round leader if round exists, otherwise use game session leader
-  const currentLeader = currentRound 
-    ? activePlayers.find(p => p.id === currentRound.leader_id)
-    : activePlayers.find(p => p.id === gameSession.current_leader_id);
-    
-  // Debug logging
-  console.log('NamePlaceThingGame Debug:', {
-    currentRound,
-    gameSession: { id: gameSession.id, current_leader_id: gameSession.current_leader_id, current_round: gameSession.current_round },
-    activePlayers: activePlayers.map(p => ({ id: p.id, name: p.name, player_order: p.player_order })),
-    currentLeader,
-    currentPlayer
-  });
-    
-  const isCurrentLeader = currentPlayer && !currentPlayer.is_spectator && currentLeader?.id === currentPlayer.id;
-  const canPlay = currentPlayer && !currentPlayer.is_spectator;
+  const roundNumber = gameSession.current_round;
+  const scoringRef = useRef(false);
+  // Which round's answers are already loaded into the form, so background
+  // refreshes never overwrite what the player is currently typing.
+  const hydratedRoundRef = useRef(null);
+  const currentPlayerId = currentPlayer?.id;
 
-  const categories = [
-    { id: 'name', label: 'Name', placeholder: 'e.g., Alice, Bob' },
-    { id: 'place', label: 'Place', placeholder: 'e.g., Amsterdam, Boston' },
-    { id: 'animal', label: 'Animal', placeholder: 'e.g., Ant, Bear' },
-    { id: 'thing', label: 'Thing', placeholder: 'e.g., Apple, Book' }
-  ];
+  const activePlayers = useMemo(
+    () => players
+      .filter(p => !p.is_spectator)
+      .sort((a, b) => (a.player_order || 0) - (b.player_order || 0)),
+    [players]
+  );
 
-  const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split('');
+  const leader =
+    activePlayers.find(p => p.id === (round?.leader_id || gameSession.current_leader_id)) ||
+    activePlayers[0];
+  const isLeader = !!currentPlayer && leader?.id === currentPlayer.id;
+  const isRoomOwner = !!currentPlayer && activePlayers[0]?.id === currentPlayer.id;
+  const canPlay = !!currentPlayer && !currentPlayer.is_spectator;
 
-  useEffect(() => {
-    loadGameData();
-    const channel = setupRealtimeSubscriptions();
+  const isFinished = !!gameSession.round_data?.finished;
+  const phase = isFinished
+    ? 'finished'
+    : !round
+      ? 'letter_selection'
+      : round.status === 'active'
+        ? 'playing'
+        : 'reviewing';
 
-    return () => {
-      if (channel) {
-        supabase.removeChannel(channel);
-      }
-    };
-  }, [gameSession.id]);
+  // Letters from earlier rounds cannot be picked again; the full list (this
+  // round included) is what the end-of-game stats report.
+  const usedLetters = playedLetters
+    .filter(entry => entry.roundNumber < roundNumber)
+    .map(entry => entry.letter);
+  const allLetters = playedLetters.map(entry => entry.letter);
 
-  // React to game session changes (like round number updates)
-  useEffect(() => {
-    if (!isTransitioning) {
-      console.log('Game session current_round changed to:', gameSession.current_round);
-      loadGameData();
-    }
-  }, [gameSession.current_round]);
+  const letter = round?.letter || '';
+  const timeLimit = round?.time_limit || 60;
+  const secondsLeft = round?.started_at
+    ? Math.max(0, timeLimit - Math.floor((now - new Date(round.started_at).getTime()) / 1000))
+    : timeLimit;
 
-  useEffect(() => {
-    let timer;
-    if (gameState === 'playing' && timeLeft > 0) {
-      timer = setTimeout(() => setTimeLeft(timeLeft - 1), 1000);
-    } else if (timeLeft === 0 && gameState === 'playing') {
-      stopRound();
-    }
-    return () => clearTimeout(timer);
-  }, [timeLeft, gameState]);
-
-  const loadGameData = async () => {
+  const loadGameData = useCallback(async () => {
     try {
-      // Don't load data if we're transitioning to prevent race conditions
-      if (isTransitioning) {
-        console.log('Skipping loadGameData during transition');
-        return;
-      }
-      
-      // Fetch fresh game session data to ensure we have the latest round number
-      const { data: freshGameSession, error: sessionError } = await supabase
-        .from('game_sessions')
-        .select('*')
-        .eq('id', gameSession.id)
-        .single();
-
-      if (sessionError) {
-        console.error('Error fetching fresh game session:', sessionError);
-        return;
-      }
-
-      const currentRoundNumber = freshGameSession.current_round;
-      console.log('Loading game data for round:', currentRoundNumber, '(fresh from database)');
-      
-      // Load current round
-      const { data: roundData, error: roundError } = await supabase
-        .from('rounds')
-        .select('*')
-        .eq('session_id', gameSession.id)
-        .eq('round_number', currentRoundNumber)
-        .single();
-
-      console.log('Round data loaded:', roundData);
-
-      if (roundData) {
-        console.log("Round data found:", roundData);
-        
-        setCurrentRound(roundData);
-        setSelectedLetter(roundData.letter || '');
-        
-        if (roundData.status === 'active' && roundData.letter) {
-          setGameState('playing');
-          // Calculate time left
-          const startTime = new Date(roundData.started_at);
-          const elapsed = Math.floor((Date.now() - startTime.getTime()) / 1000);
-          const remaining = Math.max(0, (roundData.time_limit || 60) - elapsed);
-          setTimeLeft(remaining);
-        } else if (roundData.status === 'completed') {
-          setGameState('reviewing');
-        } else {
-          // Round exists but no letter selected yet
-          setGameState('letter_selection');
-          setTimeLeft(60);
-        }
-      } else {
-        // No round yet for this round number, leader needs to select letter
-        console.log('No round found for round number:', currentRoundNumber);
-        setCurrentRound(null);
-        setSelectedLetter('');
-        setGameState('letter_selection');
-        setTimeLeft(60);
-        // Clear all answer states when no round exists
-        setPlayerAnswers({});
-        setHasSubmitted(false);
-        setCurrentAnswers({ name: '', place: '', animal: '', thing: '' });
-        setRoundScores({});
-        setScoreBreakdowns({});
-      }
-
-      // Load used letters from ALL previous rounds (excluding current active round)
-      const { data: allRounds } = await supabase
-        .from('rounds')
-        .select('letter, round_number, status')
-        .eq('session_id', gameSession.id)
-        .neq('letter', null);
-
-      // Filter to get letters from completed rounds or rounds before current
-      const usedLettersFromRounds = allRounds
-        ?.filter(round => 
-          round.round_number < currentRoundNumber || 
-          (round.round_number === currentRoundNumber && round.status === 'completed')
-        )
-        .map(round => round.letter)
-        .filter(Boolean) || [];
-
-      setUsedLetters(usedLettersFromRounds);
-
-      // Load player answers for current round
-      if (roundData && roundData.round_number === currentRoundNumber) {
-        const { data: answersData } = await supabase
-          .from('player_answers')
+      const [roundResult, lettersResult, scoresResult] = await Promise.all([
+        supabase
+          .from('rounds')
           .select('*')
-          .eq('round_id', roundData.id);
+          .eq('session_id', gameSession.id)
+          .eq('round_number', roundNumber)
+          .maybeSingle(),
+        supabase
+          .from('rounds')
+          .select('letter, round_number')
+          .eq('session_id', gameSession.id)
+          .not('letter', 'is', null),
+        supabase
+          .from('scores')
+          .select('*')
+          .eq('session_id', gameSession.id)
+      ]);
 
-        const answersMap = {};
-        answersData?.forEach(answer => {
-          answersMap[answer.player_id] = answer.answers;
-        });
-        setPlayerAnswers(answersMap);
+      const roundData = roundResult.data || null;
+      setRound(roundData);
 
-        // Check if current player has submitted for THIS SPECIFIC ROUND
-        if (currentPlayer && answersMap[currentPlayer.id]) {
-          console.log('Player has submitted for round', roundData.round_number);
-          setHasSubmitted(true);
-          setCurrentAnswers(answersMap[currentPlayer.id]);
-        } else {
-          // No answers yet for this round
-          console.log('Player has not submitted for round', roundData.round_number);
-          setHasSubmitted(false);
-          setCurrentAnswers({ name: '', place: '', animal: '', thing: '' });
-        }
-      } else {
-        // No round data or wrong round, clear all answer states
-        console.log('No round data for current round, clearing states');
-        setPlayerAnswers({});
-        setHasSubmitted(false);
-        setCurrentAnswers({ name: '', place: '', animal: '', thing: '' });
-      }
+      setPlayedLetters(
+        (lettersResult.data || [])
+          .sort((a, b) => a.round_number - b.round_number)
+          .map(r => ({ letter: r.letter, roundNumber: r.round_number }))
+      );
 
-      // Load scores
-      const { data: scoresData } = await supabase
-        .from('scores')
-        .select('*')
-        .eq('session_id', gameSession.id);
-
-      const totalScores = {};
-      const currentRoundScores = {};
-      const currentRoundBreakdowns = {};
-      
-      scoresData?.forEach(score => {
-        if (!totalScores[score.player_id]) {
-          totalScores[score.player_id] = 0;
-        }
-        totalScores[score.player_id] += score.round_score;
-        
-        if (score.round_number === gameSession.current_round) {
-          currentRoundScores[score.player_id] = score.round_score;
+      const totals = {};
+      const thisRound = {};
+      const thisRoundBreakdowns = {};
+      (scoresResult.data || []).forEach(score => {
+        totals[score.player_id] = (totals[score.player_id] || 0) + score.round_score;
+        if (score.round_number === roundNumber) {
+          thisRound[score.player_id] = score.round_score;
           if (score.score_breakdown) {
-            currentRoundBreakdowns[score.player_id] = score.score_breakdown;
+            thisRoundBreakdowns[score.player_id] = score.score_breakdown;
           }
         }
       });
-      
-      setScores(totalScores);
-      setRoundScores(currentRoundScores);
-      setScoreBreakdowns(currentRoundBreakdowns);
+      setTotalScores(totals);
+      setRoundScores(thisRound);
+      setBreakdowns(thisRoundBreakdowns);
 
-    } catch (error) {
-      console.error('Error loading game data:', error);
+      if (!roundData) {
+        setAnswersByPlayer({});
+        setHasSubmitted(false);
+        return;
+      }
+
+      const { data: answersData } = await supabase
+        .from('player_answers')
+        .select('*')
+        .eq('round_id', roundData.id);
+
+      const answersMap = {};
+      (answersData || []).forEach(answer => {
+        answersMap[answer.player_id] = answer.answers;
+      });
+      setAnswersByPlayer(answersMap);
+
+      const mine = currentPlayerId ? answersMap[currentPlayerId] : null;
+      setHasSubmitted(!!mine);
+      if (hydratedRoundRef.current !== roundData.id) {
+        hydratedRoundRef.current = roundData.id;
+        setMyAnswers(mine ? { ...EMPTY_ANSWERS, ...mine } : EMPTY_ANSWERS);
+      }
+    } catch (err) {
+      console.error('Error loading game data:', err);
+      setError('Lost sync with the game. Retrying...');
     }
-  };
+  }, [gameSession.id, roundNumber, currentPlayerId]);
 
-  const setupRealtimeSubscriptions = () => {
+  // A new round wipes the board clean before its data arrives.
+  useEffect(() => {
+    setRound(null);
+    setAnswersByPlayer({});
+    setMyAnswers(EMPTY_ANSWERS);
+    setHasSubmitted(false);
+    setError('');
+    hydratedRoundRef.current = null;
+  }, [roundNumber]);
+
+  useEffect(() => {
+    loadGameData();
+  }, [loadGameData]);
+
+  // Subscriptions call through a ref so a new round does not tear the channel
+  // down and reopen it, which would drop events in the gap.
+  const loadRef = useRef(loadGameData);
+  useEffect(() => {
+    loadRef.current = loadGameData;
+  }, [loadGameData]);
+  const reload = useCallback(() => loadRef.current(), []);
+
+  // Session-level updates: rounds appearing, starting and finishing.
+  useEffect(() => {
     const channel = supabase
-      .channel(`name-place-thing-${gameSession.id}`)
+      .channel(`npt-session-${gameSession.id}`)
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
         table: 'rounds',
         filter: `session_id=eq.${gameSession.id}`
-      }, (payload) => {
-        console.log('Round change detected:', payload);
-        // Only load data if not transitioning and if it's actually a new round
-        if (!isTransitioning) {
-          setTimeout(() => loadGameData(), 500); // Small delay to ensure state is ready
-        }
-      })
+      }, reload)
       .on('postgres_changes', {
         event: '*',
         schema: 'public',
-        table: 'player_answers'
-      }, (payload) => {
-        console.log('Player answer change detected:', payload);
-        if (!isTransitioning) {
-          loadGameData();
-        }
-      })
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'scores'
-      }, (payload) => {
-        console.log('Score change detected:', payload);
-        if (!isTransitioning) {
-          loadGameData();
-        }
-      })
-      .on('postgres_changes', {
-        event: '*',
-        schema: 'public',
-        table: 'game_sessions',
-        filter: `id=eq.${gameSession.id}`
-      }, (payload) => {
-        console.log('Game session change detected:', payload);
-        // Only reload if the current_round changed and we're not transitioning
-        if (!isTransitioning && payload.new && payload.old && 
-            payload.new.current_round !== payload.old.current_round) {
-          console.log('Round number changed, reloading after delay');
-          setTimeout(() => {
-            if (!isTransitioning) {
-              loadGameData();
-            }
-          }, 2000); // Longer delay for round changes to avoid race conditions
-        }
-      })
-      .subscribe((status) => {
-        console.log('NamePlaceThingGame subscription status:', status);
-      });
+        table: 'scores',
+        filter: `session_id=eq.${gameSession.id}`
+      }, reload)
+      .subscribe();
 
-    return channel;
-  };
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [gameSession.id, reload]);
 
-  const selectLetter = async (letter) => {
-    if (!isCurrentLeader || usedLetters.includes(letter)) return;
+  // Answers are scoped to a round, so this subscription follows the round id.
+  useEffect(() => {
+    if (!round?.id) return;
+
+    const channel = supabase
+      .channel(`npt-answers-${round.id}`)
+      .on('postgres_changes', {
+        event: '*',
+        schema: 'public',
+        table: 'player_answers',
+        filter: `round_id=eq.${round.id}`
+      }, reload)
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [round?.id, reload]);
+
+  // Clock for the countdown.
+  useEffect(() => {
+    if (phase !== 'playing') return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [phase]);
+
+  const submittedCount = activePlayers.filter(p => answersByPlayer[p.id]).length;
+  const everyoneSubmitted =
+    activePlayers.length > 0 && submittedCount === activePlayers.length;
+
+  const endRound = useCallback(async () => {
+    if (!round || scoringRef.current) return;
+
+    scoringRef.current = true;
+    setIsScoring(true);
 
     try {
-      const { data: roundData, error } = await supabase
+      // Only the client that actually flips the row to completed scores the
+      // round, so scores are written exactly once no matter who triggers it.
+      const { data: stopped, error: stopError } = await supabase
+        .from('rounds')
+        .update({ status: 'completed', ended_at: new Date().toISOString() })
+        .eq('id', round.id)
+        .eq('status', 'active')
+        .select();
+
+      if (stopError) throw stopError;
+
+      if (stopped && stopped.length > 0) {
+        await calculateScores(round);
+      }
+
+      await loadGameData();
+    } catch (err) {
+      console.error('Error ending round:', err);
+      setError('Could not finish the round. Please try again.');
+    } finally {
+      scoringRef.current = false;
+      setIsScoring(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [round, loadGameData]);
+
+  // The round ends when time runs out or everyone has answered. Every client
+  // may fire it; the conditional update above keeps it to a single winner.
+  useEffect(() => {
+    if (phase !== 'playing' || !canPlay) return;
+    if (secondsLeft > 0 && !everyoneSubmitted) return;
+    endRound();
+  }, [phase, canPlay, secondsLeft, everyoneSubmitted, endRound]);
+
+  const calculateScores = async (activeRound) => {
+    const { data: allAnswers, error: answersError } = await supabase
+      .from('player_answers')
+      .select('*')
+      .eq('round_id', activeRound.id);
+
+    if (answersError) throw answersError;
+    if (!allAnswers || allAnswers.length === 0) return;
+
+    const roundLetter = (activeRound.letter || '').toLowerCase();
+
+    const wordsToValidate = [];
+    allAnswers.forEach(playerAnswer => {
+      CATEGORIES.forEach(category => {
+        const answer = playerAnswer.answers?.[category.id]?.trim();
+        if (answer) {
+          wordsToValidate.push({
+            word: answer,
+            category: category.id,
+            playerId: playerAnswer.player_id
+          });
+        }
+      });
+    });
+
+    const validations = await batchValidateWords(
+      wordsToValidate.map(({ word, category }) => ({ word, category }))
+    );
+
+    const validationByKey = new Map();
+    wordsToValidate.forEach((wordInfo, index) => {
+      validationByKey.set(`${wordInfo.playerId}-${wordInfo.category}`, validations[index]);
+    });
+
+    const playerScores = {};
+    const playerBreakdowns = {};
+
+    allAnswers.forEach(playerAnswer => {
+      playerScores[playerAnswer.player_id] = 0;
+      playerBreakdowns[playerAnswer.player_id] = {};
+
+      CATEGORIES.forEach(category => {
+        const answer = playerAnswer.answers?.[category.id]?.trim();
+        const record = (points, reason, extra = {}) => {
+          playerScores[playerAnswer.player_id] += points;
+          playerBreakdowns[playerAnswer.player_id][category.id] = {
+            answer: answer || '',
+            points,
+            reason,
+            ...extra
+          };
+        };
+
+        if (!answer) return record(0, 'No answer');
+
+        if (answer.charAt(0).toLowerCase() !== roundLetter) {
+          return record(0, `Does not start with "${activeRound.letter}"`);
+        }
+
+        const validation = validationByKey.get(`${playerAnswer.player_id}-${category.id}`);
+        const status = validation?.status || 'unverified';
+
+        if (status === 'not-found' || status === 'wrong-category') {
+          return record(0, validation.reason, {
+            isValidWord: !!validation.isValid,
+            isCorrectCategory: false
+          });
+        }
+
+        // How many players gave this same answer for this category.
+        const duplicates = allAnswers.filter(other =>
+          other.answers?.[category.id]?.trim().toLowerCase() === answer.toLowerCase()
+        ).length;
+        const isUnique = duplicates === 1;
+
+        if (status === 'valid') {
+          return record(
+            isUnique ? POINTS.UNIQUE_VALID : POINTS.SHARED_VALID,
+            isUnique
+              ? 'Unique valid answer'
+              : `Valid answer, shared with ${duplicates - 1} other${duplicates > 2 ? 's' : ''}`,
+            {
+              isValidWord: true,
+              isCorrectCategory: true,
+              definition: validation.definition
+            }
+          );
+        }
+
+        // 'unverified' - we could not check it, so award partial credit.
+        return record(
+          isUnique ? POINTS.UNIQUE_UNVERIFIED : POINTS.SHARED_UNVERIFIED,
+          isUnique
+            ? 'Accepted but unverified'
+            : `Unverified, shared with ${duplicates - 1} other${duplicates > 2 ? 's' : ''}`,
+          { isValidWord: false, isCorrectCategory: false }
+        );
+      });
+    });
+
+    const rows = Object.entries(playerScores).map(([playerId, score]) => ({
+      session_id: gameSession.id,
+      player_id: playerId,
+      round_number: activeRound.round_number,
+      round_score: score,
+      total_score: score,
+      score_breakdown: playerBreakdowns[playerId]
+    }));
+
+    const { error: upsertError } = await supabase
+      .from('scores')
+      .upsert(rows, { onConflict: 'session_id,player_id,round_number' });
+
+    if (upsertError) {
+      // Falls back to a plain insert if the unique index has not been applied.
+      console.error('Error saving scores, retrying with insert:', upsertError);
+      const { error: insertError } = await supabase.from('scores').insert(rows);
+      if (insertError) throw insertError;
+    }
+  };
+
+  const selectLetter = async (chosen) => {
+    if (!isLeader || usedLetters.includes(chosen) || busy) return;
+
+    setBusy(true);
+    try {
+      const { data, error: insertError } = await supabase
         .from('rounds')
         .insert({
           session_id: gameSession.id,
-          round_number: gameSession.current_round,
+          round_number: roundNumber,
           leader_id: currentPlayer.id,
-          letter: letter,
+          letter: chosen,
           status: 'active',
           started_at: new Date().toISOString()
         })
         .select()
         .single();
 
-      if (error) throw error;
+      if (insertError) throw insertError;
 
-      setCurrentRound(roundData);
-      setSelectedLetter(letter);
-      setGameState('playing');
-      setTimeLeft(60);
-    } catch (error) {
-      console.error('Error selecting letter:', error);
+      setRound(data);
+      setNow(Date.now());
+    } catch (err) {
+      console.error('Error selecting letter:', err);
+      setError('Could not start the round. Please try again.');
+      await loadGameData();
+    } finally {
+      setBusy(false);
     }
   };
 
   const submitAnswers = async () => {
-    if (!canPlay || !currentRound || hasSubmitted) return;
+    if (!canPlay || !round || phase !== 'playing' || busy) return;
 
+    setBusy(true);
     try {
-      await supabase
-        .from('player_answers')
-        .insert({
-          round_id: currentRound.id,
-          player_id: currentPlayer.id,
-          answers: currentAnswers
-        });
+      const payload = {
+        round_id: round.id,
+        player_id: currentPlayer.id,
+        answers: myAnswers
+      };
+
+      const { error: writeError } = hasSubmitted
+        ? await supabase
+            .from('player_answers')
+            .update({ answers: myAnswers })
+            .eq('round_id', round.id)
+            .eq('player_id', currentPlayer.id)
+        : await supabase.from('player_answers').insert(payload);
+
+      if (writeError) throw writeError;
 
       setHasSubmitted(true);
-    } catch (error) {
-      console.error('Error submitting answers:', error);
-    }
-  };
-
-  const stopRound = async () => {
-    if (!currentRound) return;
-
-    try {
-      setIsCalculatingScores(true);
-      
-      await supabase
-        .from('rounds')
-        .update({ 
-          status: 'completed', 
-          ended_at: new Date().toISOString() 
-        })
-        .eq('id', currentRound.id);
-
-      // Calculate scores
-      await calculateScores();
-
-    } catch (error) {
-      console.error('Error stopping round:', error);
+      setAnswersByPlayer(prev => ({ ...prev, [currentPlayer.id]: myAnswers }));
+    } catch (err) {
+      console.error('Error submitting answers:', err);
+      setError('Could not submit your answers. Please try again.');
     } finally {
-      setIsCalculatingScores(false);
-    }
-  };
-
-  const calculateScores = async () => {
-    if (!currentRound) return;
-
-    try {
-      // Get all answers for this round
-      const { data: allAnswers } = await supabase
-        .from('player_answers')
-        .select('*')
-        .eq('round_id', currentRound.id);
-
-      if (!allAnswers || allAnswers.length === 0) return;
-
-      console.log('Calculating scores with word validation...');
-
-      // Prepare all words for batch validation
-      const wordsToValidate = [];
-      allAnswers.forEach(playerAnswer => {
-        categories.forEach(category => {
-          const answer = playerAnswer.answers[category.id]?.trim();
-          if (answer) {
-            wordsToValidate.push({
-              word: answer,
-              category: category.id,
-              playerId: playerAnswer.player_id
-            });
-          }
-        });
-      });
-
-      // Batch validate all words
-      const validationResults = await batchValidateWords(
-        wordsToValidate.map(({word, category}) => ({word, category}))
-      );
-
-      // Create a lookup map for validation results
-      const validationMap = new Map();
-      wordsToValidate.forEach((wordInfo, index) => {
-        const key = `${wordInfo.playerId}-${wordInfo.category}`;
-        validationMap.set(key, {
-          ...validationResults[index],
-          ...wordInfo
-        });
-      });
-
-      console.log('Word validation results:', validationResults);
-
-      // Calculate scores for each player with enhanced breakdown
-      const playerScores = {};
-      const scoreBreakdowns = {};
-      
-      allAnswers.forEach(playerAnswer => {
-        playerScores[playerAnswer.player_id] = 0;
-        scoreBreakdowns[playerAnswer.player_id] = {};
-        
-        categories.forEach(category => {
-          const answer = playerAnswer.answers[category.id]?.trim();
-          const validationKey = `${playerAnswer.player_id}-${category.id}`;
-          const validation = validationMap.get(validationKey);
-
-          if (!answer) {
-            scoreBreakdowns[playerAnswer.player_id][category.id] = { 
-              answer: '', 
-              points: 0, 
-              reason: 'No answer' 
-            };
-            return;
-          }
-
-          // Check if answer starts with the correct letter
-          if (answer.charAt(0).toLowerCase() !== selectedLetter.toLowerCase()) {
-            scoreBreakdowns[playerAnswer.player_id][category.id] = { 
-              answer: answer, 
-              points: 0, 
-              reason: 'Wrong letter' 
-            };
-            return;
-          }
-
-          // Check word validity and category match
-          if (validation && !validation.isValid) {
-            scoreBreakdowns[playerAnswer.player_id][category.id] = { 
-              answer: answer, 
-              points: 0, 
-              reason: 'Not found in dictionary' 
-            };
-            return;
-          }
-
-          if (validation && validation.isValid && !validation.isCorrectCategory) {
-            scoreBreakdowns[playerAnswer.player_id][category.id] = { 
-              answer: answer, 
-              points: 0, 
-              reason: `Not a valid ${category.label.toLowerCase()}` 
-            };
-            return;
-          }
-
-          // Count how many players gave the same valid answer
-          const sameAnswers = allAnswers.filter(otherAnswer => {
-            const otherAnswer_text = otherAnswer.answers[category.id]?.trim().toLowerCase();
-            const currentAnswer_text = answer.toLowerCase();
-            return otherAnswer_text === currentAnswer_text;
-          });
-
-          // Enhanced scoring system:
-          // - 15 points for unique valid dictionary word in correct category
-          // - 12 points for unique known name/place (not in dictionary but in our list)
-          // - 10 points for shared valid dictionary word in correct category  
-          // - 8 points for shared known name/place
-          // - 5 points for unique word (if validation failed due to API issues)
-          // - 3 points for shared word (if validation failed due to API issues)
-          let points = 0;
-          let reason = '';
-
-          if (validation && validation.isCorrectCategory) {
-            if (validation.isValid) {
-              // Valid dictionary word in correct category
-              points = sameAnswers.length === 1 ? 15 : 10;
-              reason = sameAnswers.length === 1 
-                ? 'Unique valid dictionary word' 
-                : `Valid dictionary word, shared with ${sameAnswers.length - 1} other${sameAnswers.length > 2 ? 's' : ''}`;
-            } else {
-              // Known word (in our curated lists) but not in dictionary
-              points = sameAnswers.length === 1 ? 12 : 8;
-              reason = sameAnswers.length === 1 
-                ? 'Unique known word' 
-                : `Known word, shared with ${sameAnswers.length - 1} other${sameAnswers.length > 2 ? 's' : ''}`;
-            }
-          } else if (validation && !validation.isCorrectCategory) {
-            // Wrong category
-            points = 0;
-            reason = validation.reason || 'Wrong category';
-          } else {
-            // Fallback scoring (for API failures or edge cases)
-            points = sameAnswers.length === 1 ? 5 : 3;
-            reason = sameAnswers.length === 1 
-              ? 'Unique word (unverified)' 
-              : `Unverified word, shared with ${sameAnswers.length - 1} other${sameAnswers.length > 2 ? 's' : ''}`;
-          }
-          
-          playerScores[playerAnswer.player_id] += points;
-          scoreBreakdowns[playerAnswer.player_id][category.id] = {
-            answer: answer,
-            points,
-            reason,
-            isValidWord: validation?.isValid || false,
-            isCorrectCategory: validation?.isCorrectCategory || false,
-            definition: validation?.definition,
-            meaning: validation?.meaning,
-            origin: validation?.origin,
-            gender: validation?.gender,
-            source: validation?.source
-          };
-        });
-      });
-
-      console.log('Final scores:', playerScores);
-      console.log('Score breakdowns:', scoreBreakdowns);
-
-      // Save scores to database
-      for (const [playerId, score] of Object.entries(playerScores)) {
-        await supabase
-          .from('scores')
-          .insert({
-            session_id: gameSession.id,
-            player_id: playerId,
-            round_number: gameSession.current_round,
-            round_score: score,
-            total_score: score, // Will be calculated properly when loading
-            score_breakdown: scoreBreakdowns[playerId] // Save detailed breakdown
-          });
-      }
-
-    } catch (error) {
-      console.error('Error calculating scores:', error);
+      setBusy(false);
     }
   };
 
   const nextRound = async () => {
+    if (!isLeader || busy) return;
+
+    setBusy(true);
     try {
-      console.log('Starting next round transition...');
-      // Set transition flag to prevent loadGameData from interfering
-      setIsTransitioning(true);
-      
-      // Always go to next round (infinite rounds)
-      const nextRoundNumber = gameSession.current_round + 1;
+      const nextRoundNumber = roundNumber + 1;
       const nextLeader = activePlayers[(nextRoundNumber - 1) % activePlayers.length];
 
-      console.log('Starting next round:', {
-        currentRound: gameSession.current_round,
-        nextRoundNumber,
-        nextLeader: nextLeader.name,
-        activePlayers: activePlayers.map(p => p.name)
-      });
-
-      // Reset local state FIRST to prevent confusion
-      setCurrentRound(null);
-      setHasSubmitted(false);
-      setCurrentAnswers({ name: '', place: '', animal: '', thing: '' });
-      setPlayerAnswers({});
-      setRoundScores({});
-      setScoreBreakdowns({});
-      setSelectedLetter('');
-      setGameState('letter_selection');
-      setTimeLeft(60);
-      
-      // Update the game session in the database
-      const { error: sessionError } = await supabase
+      const { error: updateError } = await supabase
         .from('game_sessions')
-        .update({ 
+        .update({
           current_round: nextRoundNumber,
           current_leader_id: nextLeader.id
         })
-        .eq('id', gameSession.id);
+        .eq('id', gameSession.id)
+        .eq('current_round', roundNumber);
 
-      if (sessionError) {
-        console.error('Error updating game session:', sessionError);
-        throw sessionError;
-      }
-
-      console.log('Game session updated successfully');
-
-      // Wait for the real-time subscription to propagate the session update
-      // and allow some time for any race conditions to resolve
-      setTimeout(() => {
-        console.log('Ending transition, data should be stable now');
-        setIsTransitioning(false);
-        // Force a data reload to ensure we're in sync
-        loadGameData();
-      }, 2000); // Reduced to 2 seconds but with explicit reload
-      
-    } catch (error) {
-      console.error('Error proceeding to next round:', error);
-      setIsTransitioning(false);
+      if (updateError) throw updateError;
+    } catch (err) {
+      console.error('Error proceeding to next round:', err);
+      setError('Could not start the next round. Please try again.');
+    } finally {
+      setBusy(false);
     }
   };
 
+  // Ends the game for everyone by flagging the session, so all clients show the
+  // final results instead of only the player who pressed the button.
   const endGame = async () => {
+    if (!isRoomOwner || busy) return;
+
+    setBusy(true);
     try {
-      // Show final results first without updating the session status yet
-      setGameState('finished');
-      
-      // Don't update the session status to 'finished' immediately
-      // This prevents the room lobby from auto-redirecting
-      
-    } catch (error) {
-      console.error('Error ending game:', error);
+      const { error: updateError } = await supabase
+        .from('game_sessions')
+        .update({ round_data: { ...(gameSession.round_data || {}), finished: true } })
+        .eq('id', gameSession.id);
+
+      if (updateError) throw updateError;
+    } catch (err) {
+      console.error('Error ending game:', err);
+      setError('Could not end the game. Please try again.');
+    } finally {
+      setBusy(false);
     }
   };
 
   const backToLobby = async () => {
+    if (!isRoomOwner || busy) return;
+
+    setBusy(true);
     try {
-      // Now actually finish the game session and return to lobby
       await supabase
         .from('game_sessions')
-        .update({ 
-          status: 'finished',
-          ended_at: new Date().toISOString()
-        })
+        .update({ status: 'finished', ended_at: new Date().toISOString() })
         .eq('id', gameSession.id);
 
-      await supabase
-        .from('rooms')
-        .update({ status: 'waiting' })
-        .eq('id', room.id);
-    } catch (error) {
-      console.error('Error returning to lobby:', error);
+      await supabase.from('rooms').update({ status: 'waiting' }).eq('id', room.id);
+    } catch (err) {
+      console.error('Error returning to lobby:', err);
+      setError('Could not return to the lobby. Please try again.');
+    } finally {
+      setBusy(false);
     }
   };
 
-  // Check if game is finished
-  if (gameSession.status === 'finished') {
-    const sortedPlayers = activePlayers.sort((a, b) => (scores[b.id] || 0) - (scores[a.id] || 0));
-    
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-50 dark:from-slate-900 dark:to-slate-800">
-        <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700">
-          <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-            <div className="text-center">
-              <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Game Finished!</h1>
-              <p className="text-sm text-slate-600 dark:text-slate-400">Room {room.room_code}</p>
-            </div>
-          </div>
-        </header>
+  const leaderboard = [...activePlayers].sort(
+    (a, b) => (totalScores[b.id] || 0) - (totalScores[a.id] || 0)
+  );
 
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-          <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl p-8 text-center">
-            <h2 className="text-4xl font-bold text-slate-900 dark:text-white mb-8">
-              🎉 Final Results!
-            </h2>
-            
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
-              {sortedPlayers.slice(0, 3).map((player, index) => (
-                <div key={player.id} className={`p-6 rounded-2xl ${
-                  index === 0 ? 'bg-gradient-to-r from-yellow-400 to-orange-500 text-white' :
-                  index === 1 ? 'bg-gradient-to-r from-gray-400 to-gray-600 text-white' :
-                  'bg-gradient-to-r from-amber-600 to-amber-800 text-white'
-                }`}>
-                  <div className="text-3xl mb-2">
-                    {index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉'}
-                  </div>
-                  <div className="font-bold text-lg">{player.name}</div>
-                  <div className="text-sm opacity-90">Score: {scores[player.id] || 0}</div>
-                </div>
-              ))}
-            </div>
 
-            <Link
-              href="/"
-              className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 
-                       text-white font-bold py-3 px-8 rounded-xl transition-all duration-200 hover:scale-105 shadow-lg"
-            >
-              🏠 Back to Home
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
-  }
+  const progress = timeLimit > 0 ? (secondsLeft / timeLimit) * 100 : 0;
+  const timeIsShort = secondsLeft <= 10;
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 to-emerald-50 dark:from-slate-900 dark:to-slate-800">
-      {/* Header */}
-      <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700">
-        <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-3">
-              <div className="bg-gradient-to-r from-green-600 to-emerald-600 rounded-xl p-2">
-                <span className="text-white text-xl font-bold">🎮</span>
-              </div>
-              <div>
-                <span className="text-xl font-bold text-slate-900 dark:text-white">Room {room.room_code}</span>
-                <div className="text-sm text-slate-600 dark:text-slate-400">
-                  Round {gameSession.current_round} • Leader: {currentLeader?.name || 'Loading...'}
-                </div>
-              </div>
+    <div className="min-h-screen">
+      <header className="bg-surface border-b-2 border-line">
+        <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-3 flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3 min-w-0">
+            <span className="w-10 h-10 rounded-xl bg-amber border-2 border-line flex items-center justify-center shrink-0">
+              <PencilLine className="w-5 h-5 text-[var(--on-amber)]" strokeWidth={2.5} />
+            </span>
+            <div className="min-w-0">
+              <p className="font-extrabold leading-tight truncate">Round {roundNumber}</p>
+              <p className="text-xs text-ink-soft font-bold truncate">
+                Leader: {leader?.name || '...'}
+              </p>
             </div>
+          </div>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="chip hidden sm:inline-flex font-mono">{room.room_code}</span>
+            <Link href="/" className="btn btn-quiet btn-sm">
+              <House className="w-4 h-4" strokeWidth={3} />
+            </Link>
           </div>
         </div>
       </header>
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        {/* Letter Selection */}
-        {gameState === 'letter_selection' && (
-          <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl p-8">
-            <div className="text-center mb-8">
-              <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-4">
-                {isCurrentLeader ? 'Choose a Letter' : `Waiting for ${currentLeader?.name || 'the leader'} to choose a letter...`}
-              </h2>
-              {usedLetters.length > 0 && (
-                <p className="text-slate-600 dark:text-slate-400">
-                  Used letters: {usedLetters.join(', ')}
-                </p>
-              )}
+      <div className="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {error && (
+          <p className="mb-6 flex items-center gap-2 text-sm font-bold text-coral">
+            <CircleAlert className="w-4 h-4 shrink-0" strokeWidth={2.5} />
+            {error}
+          </p>
+        )}
+
+        {/* Letter selection */}
+        {phase === 'letter_selection' && (
+          <div className="card p-6 sm:p-8">
+            <div className="text-center mb-6">
+              <h1 className="text-2xl sm:text-3xl mb-2">
+                {isLeader ? 'Pick a letter' : `Waiting for ${leader?.name || 'the leader'}`}
+              </h1>
+              <p className="text-ink-soft">
+                {isLeader
+                  ? 'Everyone answers with words starting with your letter.'
+                  : 'They are choosing the letter for this round.'}
+              </p>
             </div>
 
-            {isCurrentLeader && (
-              <div className="grid grid-cols-6 sm:grid-cols-8 md:grid-cols-10 gap-3 max-w-4xl mx-auto">
-                {alphabet.map(letter => (
-                  <button
-                    key={letter}
-                    onClick={() => selectLetter(letter)}
-                    disabled={usedLetters.includes(letter)}
-                    className={`
-                      aspect-square text-xl font-bold rounded-xl transition-all duration-200
-                      ${usedLetters.includes(letter)
-                        ? 'bg-slate-200 text-slate-400 cursor-not-allowed'
-                        : 'bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white cursor-pointer hover:scale-105 shadow-lg'
-                      }
-                    `}
-                  >
-                    {letter}
-                  </button>
-                ))}
+            {usedLetters.length > 0 && (
+              <p className="text-center text-sm text-ink-soft font-bold mb-6">
+                Already played: {usedLetters.join(' · ')}
+              </p>
+            )}
+
+            {isLeader ? (
+              <div className="grid grid-cols-6 sm:grid-cols-9 gap-2 sm:gap-3">
+                {ALPHABET.map(option => {
+                  const used = usedLetters.includes(option);
+                  return (
+                    <button
+                      key={option}
+                      onClick={() => selectLetter(option)}
+                      disabled={used || busy}
+                      className={`tile aspect-square text-lg font-extrabold
+                                  ${used ? 'tile-dead cursor-not-allowed' : 'tile-active cursor-pointer'}`}
+                    >
+                      {option}
+                    </button>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="flex justify-center py-6">
+                <Loader className="w-8 h-8 animate-spin text-ink-soft" strokeWidth={2.5} />
               </div>
             )}
           </div>
         )}
 
-        {/* Playing Phase */}
-        {gameState === 'playing' && (
-          <div className="space-y-8">
-            {/* Game Header */}
-            <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-lg text-center">
-              <div className="text-6xl font-bold text-green-600 mb-4">{selectedLetter}</div>
-              <div className="text-2xl font-bold text-slate-900 dark:text-white mb-4">
-                Time Left: {timeLeft}s
+        {/* Playing */}
+        {phase === 'playing' && (
+          <div className="space-y-6">
+            {/* Letter + timer */}
+            <div className="card p-6">
+              <div className="flex items-center gap-5 flex-wrap sm:flex-nowrap">
+                <span className="w-20 h-20 rounded-xl bg-amber border-2 border-line shrink-0
+                                 flex items-center justify-center text-5xl font-extrabold text-[var(--on-amber)]">
+                  {letter}
+                </span>
+
+                <div className="grow min-w-[12rem]">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className={`chip ${timeIsShort ? 'chip-coral' : 'chip-teal'}`}>
+                      <Timer className="w-4 h-4" strokeWidth={2.5} />
+                      {secondsLeft}s left
+                    </span>
+                    <span className="text-sm font-bold text-ink-soft">
+                      {submittedCount}/{activePlayers.length} in
+                    </span>
+                  </div>
+                  <div className="h-4 border-2 border-line rounded-full bg-sunken overflow-hidden">
+                    <div
+                      className={`h-full ${timeIsShort ? 'bg-coral' : 'bg-leaf'}`}
+                      style={{ width: `${progress}%`, transition: 'width 1s linear' }}
+                    />
+                  </div>
+                </div>
+
+                {isLeader && (
+                  <button onClick={endRound} disabled={isScoring} className="btn btn-coral shrink-0">
+                    <CircleStop className="w-4 h-4" strokeWidth={3} />
+                    Stop
+                  </button>
+                )}
               </div>
-              <div className="w-full bg-slate-200 dark:bg-slate-700 rounded-full h-3 mb-4">
-                <div 
-                  className="bg-gradient-to-r from-green-500 to-emerald-500 h-3 rounded-full transition-all duration-1000"
-                  style={{ width: `${(timeLeft / 60) * 100}%` }}
-                ></div>
-              </div>
-              {isCurrentLeader && (
-                <button
-                  onClick={stopRound}
-                  className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-4 rounded-lg"
-                >
-                  ⏹️ Stop Round
-                </button>
-              )}
             </div>
 
-            {/* Answer Form */}
-            {canPlay && !hasSubmitted && (
-              <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-lg">
-                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-4">
-                  Your Answers (starting with &quot;{selectedLetter}&quot;)
-                </h3>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                  {categories.map(category => (
-                    <div key={category.id}>
-                      <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-                        {category.label}
-                      </label>
+            {/* Answers */}
+            {canPlay && (
+              <div className="card p-6">
+                <h2 className="text-xl mb-4">
+                  Words starting with <span className="text-amber">{letter}</span>
+                </h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
+                  {CATEGORIES.map(category => (
+                    <label key={category.id} className="block">
+                      <span className="block text-sm font-extrabold mb-1.5">{category.label}</span>
                       <input
                         type="text"
-                        value={currentAnswers[category.id]}
-                        onChange={(e) => setCurrentAnswers(prev => ({
+                        value={myAnswers[category.id]}
+                        onChange={(e) => setMyAnswers(prev => ({
                           ...prev,
                           [category.id]: e.target.value
                         }))}
                         placeholder={category.placeholder}
-                        className="w-full px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg 
-                                 bg-white dark:bg-slate-700 text-slate-900 dark:text-white
-                                 focus:ring-2 focus:ring-green-500 focus:border-transparent"
+                        className="field"
                       />
-                    </div>
+                    </label>
                   ))}
                 </div>
-                <button
-                  onClick={submitAnswers}
-                  className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 
-                           text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 hover:scale-105"
-                >
-                  Submit Answers
+                <button onClick={submitAnswers} disabled={busy} className="btn btn-leaf btn-lg w-full">
+                  {hasSubmitted
+                    ? <><Check className="w-5 h-5" strokeWidth={3} />Update answers</>
+                    : <><Send className="w-5 h-5" strokeWidth={3} />Submit answers</>}
                 </button>
+                {hasSubmitted && (
+                  <p className="mt-3 text-sm text-center text-ink-soft font-semibold">
+                    Locked in - you can keep editing until the round ends.
+                  </p>
+                )}
               </div>
             )}
 
-            {hasSubmitted && (
-              <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-lg text-center">
-                <div className="text-green-600 text-4xl mb-4">✅</div>
-                <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-4">
-                  Answers Submitted!
-                </h3>
-                <p className="text-slate-600 dark:text-slate-400">
-                  Waiting for other players or time to run out...
-                </p>
-              </div>
-            )}
-
-            {/* Players Status */}
-            <div className="bg-white dark:bg-slate-800 rounded-2xl p-6 shadow-lg">
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">Players Status</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {activePlayers.map(player => (
-                  <div key={player.id} className="flex items-center justify-between p-3 bg-slate-50 dark:bg-slate-700 rounded-lg">
-                    <span className="font-medium text-slate-900 dark:text-white">
-                      {player.name}
-                      {player.id === currentPlayer?.id && ' (You)'}
-                    </span>
-                    <span className={`text-sm px-2 py-1 rounded ${
-                      playerAnswers[player.id] 
-                        ? 'bg-green-100 text-green-800' 
-                        : 'bg-yellow-100 text-yellow-800'
-                    }`}>
-                      {playerAnswers[player.id] ? 'Submitted' : 'Thinking...'}
-                    </span>
-                  </div>
-                ))}
-              </div>
+            {/* Who has answered */}
+            <div className="card p-6">
+              <h2 className="text-lg mb-4">Players</h2>
+              <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {activePlayers.map(player => {
+                  const done = !!answersByPlayer[player.id];
+                  return (
+                    <li key={player.id} className="panel p-3 flex items-center justify-between gap-3">
+                      <span className="font-bold truncate">
+                        {player.name}
+                        {player.id === currentPlayer?.id && (
+                          <span className="text-ink-soft font-semibold"> (you)</span>
+                        )}
+                      </span>
+                      <span className={`chip shrink-0 ${done ? 'chip-leaf' : 'chip-amber'}`}>
+                        {done
+                          ? <><Check className="w-3.5 h-3.5" strokeWidth={3} />Done</>
+                          : <><Hourglass className="w-3.5 h-3.5" strokeWidth={2.5} />Thinking</>}
+                      </span>
+                    </li>
+                  );
+                })}
+              </ul>
             </div>
           </div>
         )}
 
-        {/* Review Phase */}
-        {gameState === 'reviewing' && (
-          <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl p-8">
-            <h2 className="text-3xl font-bold text-slate-900 dark:text-white text-center mb-8">
-              Round {gameSession.current_round} Results - Letter &quot;{selectedLetter}&quot;
-            </h2>
+        {/* Review */}
+        {phase === 'reviewing' && (
+          <div className="space-y-6">
+            <div className="card p-6 text-center">
+              <span className="chip chip-amber mb-3">Round {roundNumber}</span>
+              <h1 className="text-3xl">
+                Results for <span className="text-amber">{letter}</span>
+              </h1>
+            </div>
 
-            {isCalculatingScores && (
-              <div className="mb-8 p-6 bg-blue-50 dark:bg-blue-900/20 rounded-2xl border border-blue-200 dark:border-blue-800">
-                <div className="flex items-center justify-center">
-                  <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 mr-4"></div>
-                  <div className="text-blue-800 dark:text-blue-200">
-                    <div className="font-bold">Validating words and calculating scores...</div>
-                    <div className="text-sm">This may take a few moments as we check each word in the dictionary.</div>
-                  </div>
+            {isScoring && (
+              <div className="card p-5 flex items-center gap-4">
+                <Loader className="w-6 h-6 animate-spin shrink-0" strokeWidth={2.5} />
+                <div>
+                  <p className="font-extrabold">Checking every word...</p>
+                  <p className="text-sm text-ink-soft">Looking answers up in the dictionary.</p>
                 </div>
               </div>
             )}
 
-            {/* Scoring Information */}
-            <div className="mb-6 p-4 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 rounded-xl border border-green-200 dark:border-green-800">
-              <h4 className="font-bold text-green-800 dark:text-green-200 mb-2">📚 Enhanced Scoring System</h4>
-              <div className="text-sm text-green-700 dark:text-green-300 space-y-1">
-                <div>• <strong>15 points:</strong> Unique valid dictionary word in correct category</div>
-                <div>• <strong>12 points:</strong> Unique known word (names/places from our curated list)</div>
-                <div>• <strong>10 points:</strong> Valid dictionary word (shared with others)</div>
-                <div>• <strong>8 points:</strong> Known word (shared with others)</div>
-                <div>• <strong>5 points:</strong> Unique word (unverified)</div>
-                <div>• <strong>3 points:</strong> Shared unverified word</div>
-                <div>• <strong>0 points:</strong> Wrong letter, invalid word, or wrong category</div>
-              </div>
-            </div>
-            
-            {/* Scores */}
-            <div className="mb-8">
-              <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-4">Round Scores</h3>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {activePlayers.map(player => (
-                  <div key={player.id} className="p-4 bg-slate-50 dark:bg-slate-700 rounded-lg">
-                    <div className="flex justify-between items-center">
-                      <span className="font-medium text-slate-900 dark:text-white">{player.name}</span>
-                      <div className="text-right">
-                        <div className="font-bold text-green-600">+{roundScores[player.id] || 0}</div>
-                        <div className="text-sm text-slate-600 dark:text-slate-400">
-                          Total: {scores[player.id] || 0}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+            {/* Scores this round */}
+            <div className="card p-6">
+              <h2 className="text-lg mb-4">Scores</h2>
+              <ul className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {leaderboard.map(player => (
+                  <li key={player.id} className="panel p-4 flex items-center justify-between gap-3">
+                    <span className="font-bold truncate">{player.name}</span>
+                    <span className="text-right shrink-0">
+                      <span className="block font-extrabold text-leaf">
+                        +{roundScores[player.id] || 0}
+                      </span>
+                      <span className="block text-xs text-ink-soft font-bold">
+                        {totalScores[player.id] || 0} total
+                      </span>
+                    </span>
+                  </li>
                 ))}
-              </div>
+              </ul>
             </div>
 
-            {/* Answers with Point Breakdown */}
-            <div className="mb-6">
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4 text-center">Detailed Results</h3>
-              
-              {/* Legend */}
-              <div className="mb-4 p-3 bg-slate-100 dark:bg-slate-700 rounded-lg">
-                <div className="text-sm text-slate-600 dark:text-slate-400 text-center">
-                  <strong>Legend:</strong> 
-                  <span className="ml-2">✓ = Valid dictionary word</span>
-                  <span className="ml-2">📂 = Correct category</span>
-                  <span className="ml-2">⭐ = Known word (curated list)</span>
-                </div>
-              </div>
-            </div>
+            {/* Per-answer breakdown */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              {activePlayers.map(player => (
+                <div key={player.id} className="card p-5">
+                  <h2 className="text-base mb-3">{player.name}</h2>
+                  <ul className="space-y-2">
+                    {CATEGORIES.map(category => {
+                      const breakdown = breakdowns[player.id]?.[category.id];
+                      const answer = answersByPlayer[player.id]?.[category.id];
+                      const points = breakdown?.points || 0;
 
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">{activePlayers.map(player => (
-                <div key={player.id} className="bg-slate-50 dark:bg-slate-700 rounded-2xl p-6">
-                  <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-4">
-                    {player.name}&apos;s Answers
-                  </h3>
-                  {categories.map(category => {
-                    const breakdown = scoreBreakdowns[player.id]?.[category.id];
-                    const answer = playerAnswers[player.id]?.[category.id] || 'No answer';
-                    const points = breakdown?.points || 0;
-                    
-                    return (
-                      <div key={category.id} className="mb-3 p-3 bg-white dark:bg-slate-600 rounded-lg">
-                        <div className="flex justify-between items-start">
-                          <div className="flex-1">
-                            <span className="font-medium text-slate-700 dark:text-slate-300">
-                              {category.label}:
-                            </span>
-                            <div className="text-slate-900 dark:text-white font-medium">
-                              {answer}
-                            </div>
-                            {breakdown && (
-                              <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">
-                                {breakdown.reason}
-                                {breakdown.isValidWord && breakdown.definition && (
-                                  <div className="mt-1 italic text-slate-500 dark:text-slate-400">
-                                    &quot;{breakdown.definition}&quot;
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                          <div className="text-right ml-3">
-                            <div className="flex items-center">
-                              <span className={`font-bold ${points > 0 ? 'text-green-600' : 'text-red-500'}`}>
-                                {points} pts
+                      return (
+                        <li key={category.id} className="panel p-3">
+                          <div className="flex justify-between items-start gap-3">
+                            <div className="min-w-0">
+                              <span className="block text-xs uppercase tracking-wide font-extrabold text-ink-soft">
+                                {category.label}
                               </span>
-                              {breakdown?.isValidWord && (
-                                <span className="ml-1 text-green-500" title="Valid dictionary word">
-                                  ✓
-                                </span>
-                              )}
-                              {breakdown?.isCorrectCategory && !breakdown?.isValidWord && (
-                                <span className="ml-1 text-yellow-500" title="Known word (curated list)">
-                                  ⭐
-                                </span>
-                              )}
-                              {breakdown?.isCorrectCategory && (
-                                <span className="ml-1 text-blue-500" title="Correct category">
-                                  📂
+                              <span className="block font-bold truncate">
+                                {answer || <span className="text-ink-soft font-semibold">-</span>}
+                              </span>
+                              {breakdown && (
+                                <span className="block text-xs text-ink-soft font-semibold mt-0.5">
+                                  {breakdown.reason}
                                 </span>
                               )}
                             </div>
+                            <span className={`chip shrink-0 ${points > 0 ? 'chip-leaf' : 'chip-coral'}`}>
+                              {points}
+                            </span>
                           </div>
-                        </div>
-                      </div>
-                    );
-                  })}
+                        </li>
+                      );
+                    })}
+                  </ul>
                 </div>
               ))}
             </div>
 
-            <div className="text-center space-y-4">
-              <button
-                onClick={nextRound}
-                className="bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 
-                         text-white font-bold py-3 px-8 rounded-xl transition-all duration-200 hover:scale-105 shadow-lg"
-              >
-                Next Round
-              </button>
-              
-              {/* Only room creator (first player) can end game early */}
-              {currentPlayer && activePlayers[0]?.id === currentPlayer.id && (
-                <div>
-                  <button
-                    onClick={endGame}
-                    className="bg-red-500 hover:bg-red-600 text-white font-bold py-2 px-6 rounded-lg"
-                  >
-                    End Game Early
-                  </button>
-                </div>
+            {/* Scoring key */}
+            <div className="panel p-5">
+              <h2 className="text-sm mb-3 flex items-center gap-2">
+                <BookOpen className="w-4 h-4" strokeWidth={2.5} />
+                How points work
+              </h2>
+              <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm text-ink-soft font-semibold">
+                <li><b className="text-ink">{POINTS.UNIQUE_VALID}</b> - unique and verified</li>
+                <li><b className="text-ink">{POINTS.SHARED_VALID}</b> - verified, someone else had it too</li>
+                <li><b className="text-ink">{POINTS.UNIQUE_UNVERIFIED}</b> - unique but unverified</li>
+                <li><b className="text-ink">{POINTS.SHARED_UNVERIFIED}</b> - unverified and shared</li>
+                <li className="sm:col-span-2">
+                  <b className="text-ink">0</b> - wrong letter, not a real word, or wrong category
+                </li>
+              </ul>
+            </div>
+
+            <div className="card p-5 flex flex-col sm:flex-row gap-3">
+              {isLeader ? (
+                <button onClick={nextRound} disabled={busy} className="btn btn-leaf btn-lg grow">
+                  <ArrowRight className="w-5 h-5" strokeWidth={3} />
+                  Next round
+                </button>
+              ) : (
+                <p className="panel p-4 grow text-sm font-bold text-ink-soft flex items-center gap-2">
+                  <Hourglass className="w-4 h-4 shrink-0" strokeWidth={2.5} />
+                  Waiting for {leader?.name} to start the next round
+                </p>
+              )}
+
+              {isRoomOwner && (
+                <button onClick={endGame} disabled={busy} className="btn btn-quiet shrink-0">
+                  <Flag className="w-4 h-4" strokeWidth={3} />
+                  End game
+                </button>
               )}
             </div>
           </div>
         )}
 
-        {/* Final Results */}
-        {gameState === 'finished' && (
-          <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl p-8">
-            <h2 className="text-3xl font-bold text-slate-900 dark:text-white text-center mb-8">
-              🏆 Final Results
-            </h2>
-            
-            {/* Overall Winner */}
-            {(() => {
-              const winner = activePlayers.reduce((prev, current) => 
-                (scores[current.id] || 0) > (scores[prev.id] || 0) ? current : prev
-              );
-              const winnerScore = scores[winner.id] || 0;
-              const hasWinner = winnerScore > 0;
-              
-              return (
-                <div className="text-center mb-8 p-6 bg-gradient-to-r from-yellow-50 to-orange-50 dark:from-yellow-900/20 dark:to-orange-900/20 rounded-2xl border-2 border-yellow-200 dark:border-yellow-800">
-                  <div className="text-6xl mb-4">🏆</div>
-                  {hasWinner ? (
-                    <>
-                      <h3 className="text-2xl font-bold text-yellow-800 dark:text-yellow-200 mb-2">
-                        Winner: {winner.name}!
-                      </h3>
-                      <p className="text-lg text-yellow-700 dark:text-yellow-300">
-                        Total Score: {winnerScore} points
-                      </p>
-                    </>
-                  ) : (
-                    <h3 className="text-2xl font-bold text-slate-600 dark:text-slate-400">
-                      No Winner - No points scored!
-                    </h3>
-                  )}
-                </div>
-              );
-            })()}
-            
-            {/* Final Leaderboard */}
-            <div className="mb-8">
-              <h3 className="text-xl font-bold text-slate-900 dark:text-white mb-4 text-center">Final Leaderboard</h3>
-              <div className="space-y-3">
-                {activePlayers
-                  .sort((a, b) => (scores[b.id] || 0) - (scores[a.id] || 0))
-                  .map((player, index) => (
-                    <div key={player.id} className={`p-4 rounded-lg flex justify-between items-center ${
-                      index === 0 
-                        ? 'bg-gradient-to-r from-yellow-100 to-yellow-200 dark:from-yellow-900/40 dark:to-yellow-800/40 border-2 border-yellow-300 dark:border-yellow-600'
-                        : index === 1
-                        ? 'bg-gradient-to-r from-gray-100 to-gray-200 dark:from-gray-700 dark:to-gray-600'
-                        : index === 2
-                        ? 'bg-gradient-to-r from-orange-100 to-orange-200 dark:from-orange-900/40 dark:to-orange-800/40'
-                        : 'bg-slate-50 dark:bg-slate-700'
-                    }`}>
-                      <div className="flex items-center space-x-3">
-                        <span className="text-2xl">
-                          {index === 0 ? '🥇' : index === 1 ? '🥈' : index === 2 ? '🥉' : `#${index + 1}`}
-                        </span>
-                        <span className="font-bold text-slate-900 dark:text-white">{player.name}</span>
-                        {player.id === currentPlayer?.id && <span className="text-sm text-slate-600 dark:text-slate-400">(You)</span>}
-                      </div>
-                      <span className="text-xl font-bold text-slate-900 dark:text-white">
-                        {scores[player.id] || 0} pts
-                      </span>
-                    </div>
-                  ))}
-              </div>
-            </div>
-
-            {/* Game Stats */}
-            <div className="mb-8 p-4 bg-slate-50 dark:bg-slate-700 rounded-2xl">
-              <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-3 text-center">Game Statistics</h3>
-              <div className="grid grid-cols-2 gap-4 text-center">
-                <div>
-                  <div className="text-2xl font-bold text-blue-600 dark:text-blue-400">{gameSession.current_round}</div>
-                  <div className="text-sm text-slate-600 dark:text-slate-400">Rounds Played</div>
-                </div>
-                <div>
-                  <div className="text-2xl font-bold text-green-600 dark:text-green-400">{usedLetters.length}</div>
-                  <div className="text-sm text-slate-600 dark:text-slate-400">Letters Used</div>
-                </div>
-              </div>
-              {usedLetters.length > 0 && (
-                <div className="mt-4 text-center">
-                  <div className="text-sm text-slate-600 dark:text-slate-400 mb-2">Letters Played:</div>
-                  <div className="text-lg font-mono font-bold text-slate-900 dark:text-white">
-                    {usedLetters.join(', ')}
-                  </div>
-                </div>
+        {/* Final results */}
+        {phase === 'finished' && (
+          <div className="space-y-6">
+            <div className="card p-8 text-center">
+              <span className="w-16 h-16 rounded-xl bg-amber border-2 border-line mx-auto mb-4
+                               flex items-center justify-center">
+                <Trophy className="w-8 h-8 text-[var(--on-amber)]" strokeWidth={2.5} />
+              </span>
+              {(totalScores[leaderboard[0]?.id] || 0) > 0 ? (
+                <>
+                  <h1 className="text-3xl mb-1">{leaderboard[0]?.name} wins</h1>
+                  <p className="text-ink-soft font-bold">
+                    {totalScores[leaderboard[0]?.id] || 0} points over {roundNumber} rounds
+                  </p>
+                </>
+              ) : (
+                <h1 className="text-2xl">Nobody scored a point</h1>
               )}
             </div>
 
-            {/* Controls */}
-            <div className="text-center space-y-4">
-              <button
-                onClick={backToLobby}
-                className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 
-                         text-white font-bold py-3 px-8 rounded-xl transition-all duration-200 hover:scale-105 shadow-lg"
-              >
-                🏠 Back to Lobby
-              </button>
-              
-              <div className="text-center">
-                <Link
-                  href="/"
-                  className="bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 
-                           text-slate-800 dark:text-white font-bold py-3 px-6 rounded-xl transition-all 
-                           duration-200 hover:scale-105 shadow-lg"
-                >
-                  🏠 Back to Home
-                </Link>
+            <div className="card p-6">
+              <h2 className="text-lg mb-4">Final standings</h2>
+              <ul className="space-y-3">
+                {leaderboard.map((player, index) => (
+                  <li
+                    key={player.id}
+                    className={`panel p-4 flex items-center gap-3 ${index === 0 ? 'bg-amber-soft' : ''}`}
+                  >
+                    <span className="w-9 h-9 rounded-lg bg-surface border-2 border-line shrink-0
+                                     flex items-center justify-center font-extrabold text-sm">
+                      {index + 1}
+                    </span>
+                    <span className="font-bold grow truncate">
+                      {player.name}
+                      {player.id === currentPlayer?.id && (
+                        <span className="text-ink-soft font-semibold"> (you)</span>
+                      )}
+                    </span>
+                    <span className="font-extrabold shrink-0">{totalScores[player.id] || 0}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            <div className="card p-6">
+              <h2 className="text-lg mb-4">Game summary</h2>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="panel p-4">
+                  <p className="text-3xl font-extrabold">{roundNumber}</p>
+                  <p className="text-sm text-ink-soft font-bold">Rounds played</p>
+                </div>
+                <div className="panel p-4">
+                  <p className="text-3xl font-extrabold">{allLetters.length}</p>
+                  <p className="text-sm text-ink-soft font-bold">Letters used</p>
+                </div>
               </div>
+              {allLetters.length > 0 && (
+                <p className="mt-4 font-mono font-bold tracking-widest text-center">
+                  {allLetters.join(' · ')}
+                </p>
+              )}
+            </div>
+
+            <div className="card p-5 flex flex-col sm:flex-row gap-3">
+              {isRoomOwner ? (
+                <button onClick={backToLobby} disabled={busy} className="btn btn-leaf btn-lg grow">
+                  <ArrowLeft className="w-5 h-5" strokeWidth={3} />
+                  Back to lobby
+                </button>
+              ) : (
+                <p className="panel p-4 grow text-sm font-bold text-ink-soft flex items-center gap-2">
+                  <Hourglass className="w-4 h-4 shrink-0" strokeWidth={2.5} />
+                  Waiting for {activePlayers[0]?.name} to return everyone to the lobby
+                </p>
+              )}
+              <Link href="/" className="btn btn-quiet shrink-0">
+                <House className="w-4 h-4" strokeWidth={3} />
+                All games
+              </Link>
             </div>
           </div>
         )}

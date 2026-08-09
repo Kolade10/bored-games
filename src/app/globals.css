@@ -1,26 +1,248 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+/* ---------------------------------------------------------------------------
+   Design tokens
+   Board-game feel: warm paper, ink outlines, hard offset shadows, solid
+   colour fills. No gradients anywhere.
+--------------------------------------------------------------------------- */
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+:root {
+  --paper: #fbf7ef;
+  --surface: #ffffff;
+  --sunken: #f4efe3;
+  --ink: #1c1917;
+  --ink-soft: #57534e;
+  --line: #1c1917;
+  --shadow: #1c1917;
+
+  --amber: #f59e0b;
+  --amber-soft: #fef3c7;
+  --on-amber: #1c1917;
+
+  /* teal-700 rather than 600: white text on 600 only reaches 3.7:1 */
+  --teal: #0f766e;
+  --teal-soft: #ccfbf1;
+  --on-teal: #ffffff;
+
+  --coral: #e11d48;
+  --coral-soft: #ffe4e6;
+  --on-coral: #ffffff;
+
+  --leaf: #4d7c0f;
+  --leaf-soft: #ecfccb;
+  --on-leaf: #ffffff;
+
+  --radius: 1rem;
+  --pop: 4px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+    --paper: #1c1917;
+    --surface: #292524;
+    --sunken: #221f1d;
+    --ink: #faf9f7;
+    --ink-soft: #a8a29e;
+    --line: #57534e;
+    --shadow: #000000;
+
+    --amber: #fbbf24;
+    --amber-soft: #3f2c06;
+    --on-amber: #1c1917;
+
+    --teal: #2dd4bf;
+    --teal-soft: #0b3b36;
+    --on-teal: #08302b;
+
+    --coral: #fb7185;
+    --coral-soft: #43121f;
+    --on-coral: #3f0a17;
+
+    --leaf: #a3e635;
+    --leaf-soft: #22300a;
+    --on-leaf: #1a2506;
   }
 }
 
+@theme inline {
+  --color-paper: var(--paper);
+  --color-surface: var(--surface);
+  --color-sunken: var(--sunken);
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-line: var(--line);
+  --color-amber: var(--amber);
+  --color-amber-soft: var(--amber-soft);
+  --color-teal: var(--teal);
+  --color-teal-soft: var(--teal-soft);
+  --color-coral: var(--coral);
+  --color-coral-soft: var(--coral-soft);
+  --color-leaf: var(--leaf);
+  --color-leaf-soft: var(--leaf-soft);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+  --font-display: var(--font-bricolage);
+}
+
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-bricolage), var(--font-geist-sans), system-ui, sans-serif;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+/* ---------------------------------------------------------------------------
+   Components
+--------------------------------------------------------------------------- */
+
+@layer components {
+  /* A panel that sits on the page like a physical tile. */
+  .card {
+    background: var(--surface);
+    border: 2px solid var(--line);
+    border-radius: var(--radius);
+    box-shadow: var(--pop) var(--pop) 0 var(--shadow);
+  }
+
+  /* Same shape, recessed - for lists and secondary blocks inside a card. */
+  .panel {
+    background: var(--sunken);
+    border: 2px solid var(--line);
+    border-radius: 0.75rem;
+  }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    padding: 0.7rem 1.1rem;
+    border: 2px solid var(--line);
+    border-radius: 0.75rem;
+    font-weight: 700;
+    line-height: 1;
+    cursor: pointer;
+    box-shadow: 3px 3px 0 var(--shadow);
+    transition: transform 80ms ease, box-shadow 80ms ease;
+  }
+
+  /* Buttons physically press into the page. */
+  .btn:hover:not(:disabled) {
+    transform: translate(1px, 1px);
+    box-shadow: 2px 2px 0 var(--shadow);
+  }
+
+  .btn:active:not(:disabled) {
+    transform: translate(3px, 3px);
+    box-shadow: 0 0 0 var(--shadow);
+  }
+
+  .btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+    box-shadow: 3px 3px 0 var(--shadow);
+    transform: none;
+  }
+
+  .btn-lg {
+    padding: 0.95rem 1.6rem;
+    font-size: 1.075rem;
+  }
+
+  .btn-sm {
+    padding: 0.5rem 0.8rem;
+    font-size: 0.875rem;
+    border-radius: 0.6rem;
+  }
+
+  .btn-amber { background: var(--amber); color: var(--on-amber); }
+  .btn-teal  { background: var(--teal);  color: var(--on-teal); }
+  .btn-coral { background: var(--coral); color: var(--on-coral); }
+  .btn-leaf  { background: var(--leaf);  color: var(--on-leaf); }
+  .btn-quiet { background: var(--surface); color: var(--ink); }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.3rem 0.65rem;
+    border: 2px solid var(--line);
+    border-radius: 999px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    background: var(--surface);
+    color: var(--ink);
+  }
+
+  .chip-amber { background: var(--amber-soft); }
+  .chip-teal  { background: var(--teal-soft); }
+  .chip-coral { background: var(--coral-soft); }
+  .chip-leaf  { background: var(--leaf-soft); }
+
+  .field {
+    width: 100%;
+    padding: 0.75rem 1rem;
+    background: var(--surface);
+    color: var(--ink);
+    border: 2px solid var(--line);
+    border-radius: 0.75rem;
+    font-weight: 600;
+  }
+
+  .field::placeholder {
+    color: var(--ink-soft);
+    font-weight: 500;
+  }
+
+  .field:focus {
+    outline: none;
+    box-shadow: 3px 3px 0 var(--amber);
+  }
+
+  /* Board squares and letter keys. */
+  .tile {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface);
+    border: 2px solid var(--line);
+    border-radius: 0.75rem;
+    box-shadow: 3px 3px 0 var(--shadow);
+    transition: transform 80ms ease, box-shadow 80ms ease, background-color 120ms ease;
+  }
+
+  .tile-active:hover {
+    transform: translate(1px, 1px);
+    box-shadow: 2px 2px 0 var(--shadow);
+    background: var(--amber-soft);
+  }
+
+  .tile-active:active {
+    transform: translate(3px, 3px);
+    box-shadow: 0 0 0 var(--shadow);
+  }
+
+  .tile-dead {
+    box-shadow: none;
+    background: var(--sunken);
+    color: var(--ink-soft);
+  }
+}
+
+/* Respect users who would rather things did not move. */
+@media (prefers-reduced-motion: reduce) {
+  .btn, .tile {
+    transition: none;
+  }
+  .btn:hover:not(:disabled),
+  .btn:active:not(:disabled),
+  .tile-active:hover,
+  .tile-active:active {
+    transform: none;
+  }
 }

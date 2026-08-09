@@ -1,126 +1,126 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import Link from 'next/link';
+import {
+  ArrowLeft, Check, CircleAlert, Database, Loader, RefreshCw, X
+} from 'lucide-react';
+import SiteHeader from '@/components/SiteHeader';
+
+const REQUIRED_TABLES = [
+  'rooms', 'players', 'game_sessions', 'rounds',
+  'player_answers', 'scores', 'tic_tac_toe_moves'
+];
 
 export default function DatabaseTest() {
-  const [dbStatus, setDbStatus] = useState('Checking...');
+  const [status, setStatus] = useState('checking');
   const [tables, setTables] = useState([]);
   const [error, setError] = useState('');
 
-  useEffect(() => {
-    testDatabase();
+  const testDatabase = useCallback(async () => {
+    setStatus('checking');
+    setError('');
+    setTables([]);
+
+    try {
+      const results = await Promise.all(
+        REQUIRED_TABLES.map(async (table) => {
+          const { error: tableError } = await supabase.from(table).select('*').limit(1);
+          return { table, ok: !tableError, message: tableError?.message || 'Reachable' };
+        })
+      );
+
+      setTables(results);
+      const allOk = results.every(r => r.ok);
+      setStatus(allOk ? 'ok' : 'failed');
+      if (!allOk) {
+        setError(results.find(r => !r.ok)?.message || 'One or more tables are missing.');
+      }
+    } catch (err) {
+      setError(err.message);
+      setStatus('failed');
+    }
   }, []);
 
-  const testDatabase = async () => {
-    try {
-      // Test basic connection
-      const { data: rooms, error: roomsError } = await supabase
-        .from('rooms')
-        .select('count')
-        .limit(1);
+  useEffect(() => {
+    testDatabase();
+  }, [testDatabase]);
 
-      if (roomsError) {
-        throw new Error(`Rooms table error: ${roomsError.message}`);
-      }
-
-      // Test all required tables
-      const tableTests = [
-        'rooms', 'players', 'game_sessions', 'rounds', 
-        'player_answers', 'scores', 'tic_tac_toe_moves'
-      ];
-
-      const tableResults = [];
-      for (const table of tableTests) {
-        try {
-          const { error } = await supabase
-            .from(table)
-            .select('*')
-            .limit(1);
-          
-          tableResults.push({
-            table,
-            status: error ? `❌ ${error.message}` : '✅ OK'
-          });
-        } catch (err) {
-          tableResults.push({
-            table,
-            status: `❌ ${err.message}`
-          });
-        }
-      }
-
-      setTables(tableResults);
-      setDbStatus('✅ Database connection successful');
-    } catch (error) {
-      setError(error.message);
-      setDbStatus('❌ Database connection failed');
-    }
-  };
+  const banner = {
+    checking: { chip: 'chip', label: 'Checking connection...', Icon: Loader },
+    ok: { chip: 'chip chip-leaf', label: 'Connected', Icon: Check },
+    failed: { chip: 'chip chip-coral', label: 'Connection problem', Icon: CircleAlert }
+  }[status];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800 p-8">
-      <div className="max-w-4xl mx-auto">
-        <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 shadow-lg">
-          <h1 className="text-3xl font-bold text-slate-900 dark:text-white mb-6">
-            Database Connection Test
-          </h1>
-          
-          <div className="mb-6">
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-2">Status:</h2>
-            <p className="text-lg">{dbStatus}</p>
-            {error && (
-              <div className="mt-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-                <p className="text-red-700 dark:text-red-400">{error}</p>
-              </div>
-            )}
-          </div>
+    <div className="min-h-screen">
+      <SiteHeader />
 
-          <div className="mb-6">
-            <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-4">Table Status:</h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              {tables.map(({ table, status }) => (
-                <div key={table} className="p-3 bg-slate-50 dark:bg-slate-700 rounded-lg">
-                  <div className="font-medium text-slate-900 dark:text-white">{table}</div>
-                  <div className="text-sm">{status}</div>
-                </div>
+      <div className="max-w-3xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
+        <div className="flex flex-wrap items-center gap-4 mb-3">
+          <span className="w-12 h-12 rounded-xl bg-teal border-2 border-line flex items-center justify-center">
+            <Database className="w-6 h-6 text-[var(--on-teal)]" strokeWidth={2.5} />
+          </span>
+          <h1 className="text-3xl lg:text-4xl">Database check</h1>
+        </div>
+        <p className="text-ink-soft mb-4">
+          Confirms the app can reach every table the games rely on.
+        </p>
+        <span className={`${banner.chip} mb-8`}>
+          <banner.Icon
+            className={`w-4 h-4 ${status === 'checking' ? 'animate-spin' : ''}`}
+            strokeWidth={2.5}
+          />
+          {banner.label}
+        </span>
+
+        <div className="card overflow-hidden mb-6">
+          {tables.length === 0 ? (
+            <div className="p-6 text-ink-soft font-semibold">Running checks...</div>
+          ) : (
+            <ul>
+              {tables.map(({ table, ok, message }) => (
+                <li
+                  key={table}
+                  className="flex items-center justify-between gap-4 px-5 py-3 border-b-2 border-line last:border-b-0"
+                >
+                  <code className="font-mono font-bold">{table}</code>
+                  <span className={`chip ${ok ? 'chip-leaf' : 'chip-coral'}`}>
+                    {ok
+                      ? <Check className="w-4 h-4" strokeWidth={3} />
+                      : <X className="w-4 h-4" strokeWidth={3} />}
+                    <span className="max-w-[16rem] truncate">{ok ? 'OK' : message}</span>
+                  </span>
+                </li>
               ))}
-            </div>
-          </div>
-
-          {error && (
-            <div className="mt-6 p-6 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-              <h3 className="font-bold text-yellow-800 dark:text-yellow-200 mb-2">
-                🚧 Database Setup Required
-              </h3>
-              <p className="text-yellow-700 dark:text-yellow-300 mb-4">
-                It looks like your database tables haven&apos;t been created yet. Please follow these steps:
-              </p>
-              <ol className="list-decimal list-inside text-yellow-700 dark:text-yellow-300 space-y-2">
-                <li>Go to your Supabase dashboard</li>
-                <li>Open the SQL Editor</li>
-                <li>Copy and run the SQL from <code>database_schema.sql</code></li>
-                <li>Refresh this page to test again</li>
-              </ol>
-            </div>
+            </ul>
           )}
+        </div>
 
-          <div className="mt-6">
-            <button
-              onClick={testDatabase}
-              className="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded-lg mr-4"
-            >
-              🔄 Test Again
-            </button>
-            <Link
-              href="/"
-              className="bg-slate-200 hover:bg-slate-300 dark:bg-slate-700 dark:hover:bg-slate-600 
-                       text-slate-800 dark:text-white font-bold py-2 px-4 rounded-lg"
-            >
-              🏠 Back to Home
-            </Link>
+        {status === 'failed' && (
+          <div className="card p-6 mb-6 bg-coral-soft">
+            <h2 className="text-lg mb-2">Setup needed</h2>
+            <p className="text-sm mb-3">{error}</p>
+            <ol className="text-sm list-decimal list-inside space-y-1 font-semibold">
+              <li>Open your Supabase dashboard and go to the SQL Editor</li>
+              <li>Paste and run the contents of <code className="font-mono">database_schema.sql</code></li>
+              <li>Then run <code className="font-mono">database_migration_2.sql</code></li>
+              <li>Check that <code className="font-mono">.env.local</code> has the right project URL and key</li>
+              <li>Restart the dev server and re-run this check</li>
+            </ol>
           </div>
+        )}
+
+        <div className="flex flex-wrap gap-3">
+          <button onClick={testDatabase} className="btn btn-teal" disabled={status === 'checking'}>
+            <RefreshCw className={`w-4 h-4 ${status === 'checking' ? 'animate-spin' : ''}`} strokeWidth={3} />
+            Run again
+          </button>
+          <Link href="/" className="btn btn-quiet">
+            <ArrowLeft className="w-4 h-4" strokeWidth={3} />
+            Back to games
+          </Link>
         </div>
       </div>
     </div>

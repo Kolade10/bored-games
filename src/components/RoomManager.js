@@ -1,8 +1,16 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { supabase, generateRoomCode, getPlayerName, setPlayerName } from '@/lib/supabase';
+import {
+  supabase,
+  generateRoomCode,
+  getPlayerName,
+  setPlayerName,
+  setRoomPlayerId
+} from '@/lib/supabase';
+import { joinRoomAsPlayer } from '@/lib/rooms';
 import { useRouter } from 'next/navigation';
+import { ArrowRight, CircleAlert, DoorOpen, Loader, Plus, UserPen } from 'lucide-react';
 
 export default function RoomManager({ gameType, gameTitle, minPlayers, maxPlayers }) {
   const [playerName, setPlayerNameState] = useState('');
@@ -25,25 +33,28 @@ export default function RoomManager({ gameType, gameTitle, minPlayers, maxPlayer
 
   const handleNameSubmit = (e) => {
     e.preventDefault();
-    if (playerName.trim().length < 2) {
+    const trimmed = playerName.trim();
+    if (trimmed.length < 2) {
       setError('Name must be at least 2 characters long');
       return;
     }
-    setPlayerName(playerName.trim());
+    setPlayerName(trimmed);
+    setPlayerNameState(trimmed);
     setShowNameInput(false);
     setError('');
-    
+
     // Execute pending action
     if (pendingAction === 'create') {
-      createRoom();
+      createRoom(trimmed);
     } else if (pendingAction === 'join') {
-      joinRoom();
+      joinRoom(trimmed);
     }
     setPendingAction(null);
   };
 
-  const createRoom = async () => {
-    if (!playerName.trim()) {
+  const createRoom = async (nameOverride) => {
+    const name = (nameOverride || playerName).trim();
+    if (!name) {
       setShowNameInput(true);
       setPendingAction('create');
       return;
@@ -53,51 +64,65 @@ export default function RoomManager({ gameType, gameTitle, minPlayers, maxPlayer
     setError('');
 
     try {
-      const newRoomCode = generateRoomCode();
-      
-      // Create room
-      const { data: roomData, error: roomError } = await supabase
-        .from('rooms')
+      // Room codes are random, so a collision is possible - retry a few times.
+      let roomData = null;
+      let newRoomCode = '';
+      for (let attempt = 0; attempt < 5 && !roomData; attempt++) {
+        newRoomCode = generateRoomCode();
+        const { data, error: roomError } = await supabase
+          .from('rooms')
+          .insert({
+            room_code: newRoomCode,
+            game_type: gameType,
+            max_players: maxPlayers,
+            status: 'waiting'
+          })
+          .select()
+          .single();
+
+        if (!roomError) {
+          roomData = data;
+        } else if (roomError.code !== '23505') {
+          throw roomError;
+        }
+      }
+
+      if (!roomData) {
+        throw new Error('Could not allocate a room code. Please try again.');
+      }
+
+      // Add the creator as player 1 (the room owner)
+      const { data: playerData, error: playerError } = await supabase
+        .from('players')
         .insert({
-          room_code: newRoomCode,
-          game_type: gameType,
-          max_players: maxPlayers,
-          status: 'waiting'
+          room_id: roomData.id,
+          name,
+          player_order: 1
         })
         .select()
         .single();
 
-      if (roomError) throw roomError;
-
-      // Add player to room
-      const { error: playerError } = await supabase
-        .from('players')
-        .insert({
-          room_id: roomData.id,
-          name: playerName.trim(),
-          player_order: 1
-        });
-
       if (playerError) throw playerError;
 
-      // Navigate to room lobby
+      setRoomPlayerId(newRoomCode, playerData.id);
       router.push(`/room/${newRoomCode}`);
     } catch (error) {
       console.error('Error creating room:', error);
-      setError('Failed to create room. Please try again.');
-    } finally {
+      setError(error.message || 'Failed to create room. Please try again.');
       setIsCreating(false);
     }
   };
 
-  const joinRoom = async () => {
-    if (!playerName.trim()) {
+  const joinRoom = async (nameOverride) => {
+    const name = (nameOverride || playerName).trim();
+    if (!name) {
       setShowNameInput(true);
       setPendingAction('join');
       return;
     }
 
-    if (!roomCode.trim()) {
+    const code = roomCode.trim().toUpperCase();
+    if (!code) {
       setError('Please enter a room code');
       return;
     }
@@ -106,100 +131,60 @@ export default function RoomManager({ gameType, gameTitle, minPlayers, maxPlayer
     setError('');
 
     try {
-      // Check if room exists and get room info
       const { data: roomData, error: roomError } = await supabase
         .from('rooms')
-        .select(`
-          *,
-          players (*)
-        `)
-        .eq('room_code', roomCode.toUpperCase())
-        .single();
+        .select('*, players (*)')
+        .eq('room_code', code)
+        .maybeSingle();
 
-      if (roomError || !roomData) {
-        throw new Error('Room not found');
+      if (roomError) throw roomError;
+      if (!roomData) throw new Error('Room not found. Check the code and try again.');
+
+      if (roomData.game_type !== gameType) {
+        throw new Error('That room is running a different game.');
       }
 
-      // Check if room is full
-      const currentPlayers = roomData.players.filter(p => !p.is_spectator);
-      if (currentPlayers.length >= roomData.max_players) {
-        // Join as spectator
-        const { error: spectatorError } = await supabase
-          .from('players')
-          .insert({
-            room_id: roomData.id,
-            name: playerName.trim(),
-            is_spectator: true
-          });
-
-        if (spectatorError) {
-          if (spectatorError.code === '23505') { // Unique constraint violation
-            throw new Error('A player with this name already exists in the room');
-          }
-          throw spectatorError;
-        }
-      } else {
-        // Join as player
-        const nextPlayerOrder = Math.max(...currentPlayers.map(p => p.player_order || 0), 0) + 1;
-        
-        const { error: playerError } = await supabase
-          .from('players')
-          .insert({
-            room_id: roomData.id,
-            name: playerName.trim(),
-            player_order: nextPlayerOrder
-          });
-
-        if (playerError) {
-          if (playerError.code === '23505') { // Unique constraint violation
-            throw new Error('A player with this name already exists in the room');
-          }
-          throw playerError;
-        }
-      }
-
-      // Navigate to room lobby
-      router.push(`/room/${roomCode.toUpperCase()}`);
+      // Joins as a spectator when the room is full, and reuses the existing
+      // seat when someone reconnects with the same name.
+      await joinRoomAsPlayer(roomData, roomData.players, name);
+      router.push(`/room/${code}`);
     } catch (error) {
       console.error('Error joining room:', error);
       setError(error.message || 'Failed to join room. Please try again.');
-    } finally {
       setIsJoining(false);
     }
   };
 
   if (showNameInput) {
     return (
-      <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 shadow-lg max-w-md mx-auto">
-        <h3 className="text-2xl font-bold text-slate-900 dark:text-white mb-6 text-center">
-          Enter Your Name
-        </h3>
+      <div className="card p-7 max-w-md w-full mx-auto">
+        <span className="w-12 h-12 rounded-xl bg-amber border-2 border-line flex items-center justify-center mb-4">
+          <UserPen className="w-6 h-6 text-[var(--on-amber)]" strokeWidth={2.5} />
+        </span>
+        <h2 className="text-2xl mb-1">What should we call you?</h2>
+        <p className="text-sm text-ink-soft mb-5">
+          This is the name the other players will see. You can change it later.
+        </p>
+
         <form onSubmit={handleNameSubmit} className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
-              Your Name
-            </label>
-            <input
-              type="text"
-              value={playerName}
-              onChange={(e) => setPlayerNameState(e.target.value)}
-              placeholder="Enter your name..."
-              className="w-full px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-lg 
-                       bg-white dark:bg-slate-700 text-slate-900 dark:text-white
-                       focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-              autoFocus
-              maxLength={50}
-            />
-          </div>
+          <input
+            type="text"
+            value={playerName}
+            onChange={(e) => setPlayerNameState(e.target.value)}
+            placeholder="Your name"
+            className="field"
+            autoFocus
+            maxLength={50}
+          />
           {error && (
-            <div className="text-red-500 text-sm">{error}</div>
+            <p className="flex items-center gap-2 text-sm font-bold text-coral">
+              <CircleAlert className="w-4 h-4 shrink-0" strokeWidth={2.5} />
+              {error}
+            </p>
           )}
-          <button
-            type="submit"
-            className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 
-                     text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 hover:scale-105"
-          >
+          <button type="submit" className="btn btn-amber w-full btn-lg">
             Continue
+            <ArrowRight className="w-4 h-4" strokeWidth={3} />
           </button>
         </form>
       </div>
@@ -207,95 +192,95 @@ export default function RoomManager({ gameType, gameTitle, minPlayers, maxPlayer
   }
 
   return (
-    <div className="bg-white dark:bg-slate-800 rounded-2xl p-8 shadow-lg">
-      <div className="text-center mb-8">
-        <h2 className="text-3xl font-bold text-slate-900 dark:text-white mb-4">
-          {gameTitle}
-        </h2>
-        <p className="text-slate-600 dark:text-slate-400 mb-2">
-          Welcome, <span className="font-semibold text-blue-600 dark:text-blue-400">{playerName}</span>!
+    <div className="card p-7">
+      <div className="flex items-center justify-between gap-3 mb-6">
+        <p className="text-sm text-ink-soft">
+          Playing as <span className="font-extrabold text-ink">{playerName}</span>
         </p>
-        <p className="text-sm text-slate-500 dark:text-slate-500">
-          {minPlayers === maxPlayers ? `${minPlayers} players` : `${minPlayers}-${maxPlayers} players`}
-        </p>
+        <button
+          onClick={() => setShowNameInput(true)}
+          className="chip hover:bg-sunken"
+          type="button"
+        >
+          <UserPen className="w-3.5 h-3.5" strokeWidth={2.5} />
+          Change
+        </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {/* Create Room */}
-        <div className="space-y-4">
-          <h3 className="text-xl font-bold text-slate-900 dark:text-white">Create Room</h3>
-          <p className="text-slate-600 dark:text-slate-400 text-sm">
-            Start a new game and invite friends with a room code
-          </p>
+      {/* Create */}
+      <div className="panel p-5 mb-4">
+        <h2 className="text-lg mb-1">Start a new room</h2>
+        <p className="text-sm text-ink-soft mb-4">
+          You get a code to share. Whoever joins first plays; the rest watch.
+        </p>
+        <button onClick={() => createRoom()} disabled={isCreating} className="btn btn-teal btn-lg w-full">
+          {isCreating ? (
+            <>
+              <Loader className="w-4 h-4 animate-spin" strokeWidth={3} />
+              Creating...
+            </>
+          ) : (
+            <>
+              <Plus className="w-4 h-4" strokeWidth={3} />
+              Create room
+            </>
+          )}
+        </button>
+      </div>
+
+      {/* Divider */}
+      <div className="flex items-center gap-3 my-5">
+        <span className="h-0.5 bg-line grow rounded-full opacity-30" />
+        <span className="text-xs font-extrabold uppercase tracking-widest text-ink-soft">or</span>
+        <span className="h-0.5 bg-line grow rounded-full opacity-30" />
+      </div>
+
+      {/* Join */}
+      <div className="panel p-5">
+        <h2 className="text-lg mb-1">Join with a code</h2>
+        <p className="text-sm text-ink-soft mb-4">
+          Six characters, from whoever set the room up.
+        </p>
+        <div className="space-y-3">
+          <input
+            type="text"
+            value={roomCode}
+            onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && roomCode.trim() && !isJoining) joinRoom();
+            }}
+            placeholder="ABC123"
+            className="field text-center font-mono text-2xl tracking-[0.3em] uppercase"
+            maxLength={6}
+            inputMode="text"
+            autoCapitalize="characters"
+          />
           <button
-            onClick={createRoom}
-            disabled={isCreating}
-            className="w-full bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 
-                     disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed
-                     text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 hover:scale-105"
+            onClick={() => joinRoom()}
+            disabled={isJoining || !roomCode.trim()}
+            className="btn btn-amber btn-lg w-full"
           >
-            {isCreating ? (
-              <span className="flex items-center justify-center space-x-2">
-                <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                <span>Creating...</span>
-              </span>
+            {isJoining ? (
+              <>
+                <Loader className="w-4 h-4 animate-spin" strokeWidth={3} />
+                Joining...
+              </>
             ) : (
-              '🎮 Create Room'
+              <>
+                <DoorOpen className="w-4 h-4" strokeWidth={3} />
+                Join room
+              </>
             )}
           </button>
-        </div>
-
-        {/* Join Room */}
-        <div className="space-y-4">
-          <h3 className="text-xl font-bold text-slate-900 dark:text-white">Join Room</h3>
-          <p className="text-slate-600 dark:text-slate-400 text-sm">
-            Enter a room code to join an existing game
-          </p>
-          <div className="space-y-3">
-            <input
-              type="text"
-              value={roomCode}
-              onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-              placeholder="Enter room code..."
-              className="w-full px-4 py-3 border border-slate-300 dark:border-slate-600 rounded-lg 
-                       bg-white dark:bg-slate-700 text-slate-900 dark:text-white text-center
-                       focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono text-lg"
-              maxLength={6}
-            />
-            <button
-              onClick={joinRoom}
-              disabled={isJoining || !roomCode.trim()}
-              className="w-full bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 
-                       disabled:from-gray-400 disabled:to-gray-500 disabled:cursor-not-allowed
-                       text-white font-bold py-3 px-6 rounded-lg transition-all duration-200 hover:scale-105"
-            >
-              {isJoining ? (
-                <span className="flex items-center justify-center space-x-2">
-                  <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
-                  <span>Joining...</span>
-                </span>
-              ) : (
-                '🚪 Join Room'
-              )}
-            </button>
-          </div>
         </div>
       </div>
 
       {error && (
-        <div className="mt-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg">
-          <div className="text-red-700 dark:text-red-400 text-sm">{error}</div>
-        </div>
+        <p className="mt-5 flex items-center gap-2 text-sm font-bold text-coral">
+          <CircleAlert className="w-4 h-4 shrink-0" strokeWidth={2.5} />
+          {error}
+        </p>
       )}
-
-      <div className="mt-8 text-center">
-        <button
-          onClick={() => setShowNameInput(true)}
-          className="text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200 text-sm"
-        >
-          Change name
-        </button>
-      </div>
     </div>
   );
 }

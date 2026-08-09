@@ -1,74 +1,120 @@
 import Link from 'next/link';
+import {
+  ArrowLeft, Grid3x3, Link2, Paintbrush, PencilLine, Sparkles, Users, Zap
+} from 'lucide-react';
+import SiteHeader from '@/components/SiteHeader';
+
+const CURRENT = [
+  {
+    Icon: Grid3x3,
+    title: 'Tic Tac Toe',
+    body: 'The classic 3x3 grid for two players. Winner of a round opens the next one.'
+  },
+  {
+    Icon: PencilLine,
+    title: 'Name Place Animal Thing',
+    body: 'One letter, four categories, sixty seconds. Answers nobody else thought of score the most.'
+  }
+];
+
+const UPCOMING = [
+  {
+    Icon: Link2,
+    title: 'Word Chain',
+    body: 'Every word starts with the last letter of the one before it.'
+  },
+  {
+    Icon: Paintbrush,
+    title: 'Drawing Guess',
+    body: 'One player draws, everyone else guesses. Talent optional.'
+  }
+];
+
+const PRINCIPLES = [
+  {
+    Icon: Zap,
+    title: 'No sign-up',
+    body: 'Type a name, get a room code, play. Nothing to install and no account to create.'
+  },
+  {
+    Icon: Users,
+    title: 'Built for a group',
+    body: 'Everyone sees the same board at the same time. Rooms hold spectators when they fill up.'
+  },
+  {
+    Icon: Sparkles,
+    title: 'Short by design',
+    body: 'Games run a few minutes, not a few hours. Good for a break, a queue, or a slow meeting.'
+  }
+];
+
+function GameRow({ Icon, title, body }) {
+  return (
+    <li className="flex gap-4 items-start">
+      <span className="w-10 h-10 rounded-xl bg-sunken border-2 border-line flex items-center justify-center shrink-0">
+        <Icon className="w-5 h-5" strokeWidth={2.5} />
+      </span>
+      <div>
+        <h3 className="text-base mb-0.5">{title}</h3>
+        <p className="text-sm text-ink-soft">{body}</p>
+      </div>
+    </li>
+  );
+}
 
 export default function About() {
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 dark:from-slate-900 dark:to-slate-800">
-      {/* Header */}
-      <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur-sm border-b border-slate-200 dark:border-slate-700">
-        <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
-          <div className="flex items-center justify-between">
-            <Link href="/" className="flex items-center space-x-3 hover:opacity-75 transition-opacity">
-              <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl p-2">
-                <span className="text-white text-xl font-bold">🎮</span>
-              </div>
-              <span className="text-xl font-bold text-slate-900 dark:text-white">BoredGame</span>
-            </Link>
-            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">About</h1>
-          </div>
-        </div>
-      </header>
+    <div className="min-h-screen">
+      <SiteHeader current="/about" />
 
       <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 py-12">
-        <div className="bg-white dark:bg-slate-800 rounded-3xl shadow-2xl p-8">
-          <h2 className="text-4xl font-bold text-slate-900 dark:text-white text-center mb-8">
-            About BoredGame
-          </h2>
-          
-          <div className="prose prose-lg max-w-none text-slate-700 dark:text-slate-300">
-            <p className="text-xl leading-relaxed mb-6">
-              Welcome to BoredGame - your ultimate destination for fun, engaging multiplayer games! 
-              We believe that the best games are the ones you play with friends, and we&apos;re here to 
-              bring those classic experiences to the digital world.
-            </p>
+        <h1 className="text-4xl lg:text-5xl mb-4">About BoredGame</h1>
+        <p className="text-lg text-ink-soft mb-10 max-w-2xl">
+          Party games that work over a room code. The kind of thing you reach for
+          when two people are bored in different places.
+        </p>
 
-            <h3 className="text-2xl font-bold text-slate-900 dark:text-white mb-4">Our Mission</h3>
-            <p className="mb-6">
-              To create simple, fun, and accessible games that bring people together. Whether you&apos;re 
-              looking to pass time, challenge your friends, or test your quick thinking skills, 
-              BoredGame has something for everyone.
-            </p>
-
-            <h3 className="text-2xl font-bold text-slate-900 dark:text-white mb-4">Current Games</h3>
-            <ul className="list-disc list-inside space-y-2 mb-6">
-              <li><strong>Tic Tac Toe:</strong> The classic 3x3 grid strategy game for two players</li>
-              <li><strong>Name Place Animal Thing:</strong> A fast-paced word game that tests your vocabulary and quick thinking</li>
-            </ul>
-
-            <h3 className="text-2xl font-bold text-slate-900 dark:text-white mb-4">Coming Soon</h3>
-            <ul className="list-disc list-inside space-y-2 mb-6">
-              <li><strong>Word Chain:</strong> Connect words where each starts with the last letter of the previous</li>
-              <li><strong>Drawing Guess:</strong> Express creativity through drawing and test your guessing skills</li>
-              <li>And many more exciting games!</li>
-            </ul>
-
-            <h3 className="text-2xl font-bold text-slate-900 dark:text-white mb-4">Technology</h3>
-            <p className="mb-6">
-              Built with modern web technologies including Next.js, React, and Tailwind CSS for a 
-              smooth, responsive gaming experience across all devices. We&apos;re also planning to integrate 
-              Supabase for real-time multiplayer functionality and user accounts.
-            </p>
-          </div>
-
-          <div className="text-center mt-8">
-            <Link
-              href="/"
-              className="bg-gradient-to-r from-blue-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 
-                       text-white font-bold py-3 px-8 rounded-xl transition-all duration-200 hover:scale-105 shadow-lg"
-            >
-              Back to Games
-            </Link>
-          </div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-10">
+          {PRINCIPLES.map(({ Icon, title, body }) => (
+            <div key={title} className="card p-5">
+              <span className="w-10 h-10 rounded-xl bg-amber border-2 border-line flex items-center justify-center mb-3">
+                <Icon className="w-5 h-5 text-[var(--on-amber)]" strokeWidth={2.5} />
+              </span>
+              <h2 className="text-base mb-1">{title}</h2>
+              <p className="text-sm text-ink-soft">{body}</p>
+            </div>
+          ))}
         </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
+          <section className="card p-6">
+            <h2 className="text-xl mb-4">Playable now</h2>
+            <ul className="space-y-4">
+              {CURRENT.map(game => <GameRow key={game.title} {...game} />)}
+            </ul>
+          </section>
+
+          <section className="card p-6">
+            <h2 className="text-xl mb-4">On the list</h2>
+            <ul className="space-y-4">
+              {UPCOMING.map(game => <GameRow key={game.title} {...game} />)}
+            </ul>
+          </section>
+        </div>
+
+        <section className="panel p-6 mb-10">
+          <h2 className="text-lg mb-2">How it is built</h2>
+          <p className="text-ink-soft">
+            Next.js and React for the interface, Tailwind for styling, and Supabase
+            for the database and realtime sync that keeps every player&apos;s screen
+            in step. Game state lives server-side so refreshing never loses your place.
+          </p>
+        </section>
+
+        <Link href="/" className="btn btn-quiet">
+          <ArrowLeft className="w-4 h-4" strokeWidth={3} />
+          Back to games
+        </Link>
       </div>
     </div>
   );

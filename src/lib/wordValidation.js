@@ -1,160 +1,85 @@
-// Word validation service using Dictionary API + Comprehensive local word lists
-// This provides much better coverage for names, places, animals, and things
+// Word validation for Name Place Animal Thing.
+//
+// Answers are checked against curated local lists first (instant, and the only
+// sensible source for proper nouns), then against the free Dictionary API.
+//
+// Every answer resolves to one of four statuses:
+//   'valid'          - recognised and it fits the category
+//   'wrong-category' - a real word, but not a plausible answer for the category
+//   'not-found'      - not a word we can find anywhere
+//   'unverified'     - we could not check it (API down, or a proper noun that
+//                      no dictionary covers). Scored generously rather than 0.
 
 import { findInComprehensiveLists } from './comprehensiveWordLists.js';
 
 const DICTIONARY_API_BASE = 'https://api.dictionaryapi.dev/api/v2/entries/en';
-const BEHIND_THE_NAME_API_BASE = 'https://www.behindthename.com/api/lookup.json';
+
+// Categories made up of proper nouns: a dictionary miss proves nothing, so we
+// give the player the benefit of the doubt instead of scoring them zero.
+const PROPER_NOUN_CATEGORIES = new Set(['name', 'place']);
 
 // Cache to avoid repeated API calls for the same words
 const wordCache = new Map();
-const nameCache = new Map();
 
 /**
- * Validates a name using Behind the Name API
- * @param {string} name - The name to validate
- * @returns {Promise<{isValid: boolean, meaning?: string, gender?: string, origin?: string}>}
+ * Looks a word up in the Dictionary API.
+ * @param {string} word
+ * @returns {Promise<{isValid: boolean, unavailable?: boolean, definition?: string, partOfSpeech?: string}>}
  */
-async function validateNameWithBehindTheName(name) {
-  if (!name || typeof name !== 'string') {
-    return { isValid: false };
-  }
-
-  const cleanName = name.trim().toLowerCase();
-  
-  // Check cache first
-  if (nameCache.has(cleanName)) {
-    return nameCache.get(cleanName);
-  }
-
-  try {
-    // Behind the Name API - no key required for basic lookup
-    const response = await fetch(`${BEHIND_THE_NAME_API_BASE}?name=${encodeURIComponent(cleanName)}`);
-    
-    if (response.ok) {
-      const data = await response.json();
-      
-      // Check if we got valid name data
-      if (data && data.length > 0) {
-        const nameData = data[0];
-        const result = {
-          isValid: true,
-          meaning: nameData.meaning || '',
-          gender: nameData.gender || '',
-          origin: nameData.usage?.join(', ') || '',
-          source: 'behindthename'
-        };
-        
-        // Cache the result
-        nameCache.set(cleanName, result);
-        return result;
-      } else {
-        // Name not found in Behind the Name
-        const result = { isValid: false, source: 'behindthename' };
-        nameCache.set(cleanName, result);
-        return result;
-      }
-    } else {
-      // API error
-      console.warn('Behind the Name API error:', response.status);
-      return { isValid: false, source: 'behindthename', error: 'API error' };
-    }
-  } catch (error) {
-    console.error('Error validating name with Behind the Name:', error);
-    // On network error, don't penalize - let other validation methods handle it
-    return { isValid: false, source: 'behindthename', error: 'Network error' };
-  }
-}
-
-/**
- * Enhanced validation using comprehensive local lists + dictionary API
- * @param {string} word - The word to validate
- * @param {string} category - The category to check against
- * @returns {Promise<{isValid: boolean, isInComprehensiveList: boolean, definition?: string, partOfSpeech?: string}>}
- */
-export async function validateWordEnhanced(word, category) {
-  if (!word || typeof word !== 'string') {
-    return { isValid: false, isInComprehensiveList: false };
-  }
-
-  const cleanWord = word.trim().toLowerCase();
-  
-  // First check our comprehensive lists (faster and more reliable for names/places)
-  const isInComprehensiveList = findInComprehensiveLists(cleanWord, category);
-  
-  if (isInComprehensiveList) {
-    return {
-      isValid: true,
-      isInComprehensiveList: true,
-      source: 'comprehensive_list',
-      definition: `Valid ${category} from curated list`
-    };
-  }
-  
-  // If not in our lists, check dictionary API
-  const dictionaryResult = await validateWord(cleanWord);
-  
-  return {
-    ...dictionaryResult,
-    isInComprehensiveList: false,
-    source: dictionaryResult.isValid ? 'dictionary_api' : 'unknown'
-  };
-}
 export async function validateWord(word) {
   if (!word || typeof word !== 'string') {
     return { isValid: false };
   }
 
   const cleanWord = word.trim().toLowerCase();
-  
-  // Check cache first
+
   if (wordCache.has(cleanWord)) {
     return wordCache.get(cleanWord);
   }
 
   try {
     const response = await fetch(`${DICTIONARY_API_BASE}/${encodeURIComponent(cleanWord)}`);
-    
-    if (response.ok) {
-      const data = await response.json();
-      
-      // Extract first definition and part of speech
-      const firstEntry = data[0];
-      const firstMeaning = firstEntry?.meanings?.[0];
-      const firstDefinition = firstMeaning?.definitions?.[0];
-      
-      const result = {
-        isValid: true,
-        definition: firstDefinition?.definition || '',
-        partOfSpeech: firstMeaning?.partOfSpeech || '',
-        word: firstEntry?.word || cleanWord
-      };
-      
-      // Cache the result
-      wordCache.set(cleanWord, result);
-      return result;
-    } else {
-      // Word not found in dictionary
+
+    if (response.status === 404) {
       const result = { isValid: false };
       wordCache.set(cleanWord, result);
       return result;
     }
+
+    if (!response.ok) {
+      // Rate limited or down - do not cache, and do not punish the player.
+      return { isValid: false, unavailable: true };
+    }
+
+    const data = await response.json();
+    const firstEntry = data[0];
+    const firstMeaning = firstEntry?.meanings?.[0];
+
+    const result = {
+      isValid: true,
+      definition: firstMeaning?.definitions?.[0]?.definition || '',
+      partOfSpeech: firstMeaning?.partOfSpeech || '',
+      word: firstEntry?.word || cleanWord
+    };
+
+    wordCache.set(cleanWord, result);
+    return result;
   } catch (error) {
     console.error('Error validating word:', error);
-    // On network error, assume word is valid to not penalize players
-    return { isValid: true, definition: 'Could not verify - network error' };
+    return { isValid: false, unavailable: true };
   }
 }
 
 /**
- * Enhanced category validation using comprehensive lists + dictionary
- * @param {string} word - The word to validate
- * @param {string} category - The category ('name', 'place', 'animal', 'thing')
- * @returns {Promise<{isValid: boolean, isCorrectCategory: boolean, source: string, reason: string}>}
+ * Validates a word against a category.
+ * @param {string} word
+ * @param {'name'|'place'|'animal'|'thing'} category
+ * @returns {Promise<{status: string, isValid: boolean, isCorrectCategory: boolean, source: string, reason: string, definition?: string}>}
  */
 export async function validateWordAndCategory(word, category) {
   if (!word || !word.trim()) {
     return {
+      status: 'not-found',
       isValid: false,
       isCorrectCategory: false,
       source: 'none',
@@ -163,203 +88,170 @@ export async function validateWordAndCategory(word, category) {
   }
 
   const cleanWord = word.trim().toLowerCase();
-  
-  // Check comprehensive lists first (most reliable for names/places)
-  const isInComprehensiveList = findInComprehensiveLists(cleanWord, category);
-  
-  if (isInComprehensiveList) {
+
+  // Curated lists first - fast, offline, and the best source for proper nouns.
+  if (findInComprehensiveLists(cleanWord, category)) {
     return {
+      status: 'valid',
       isValid: true,
       isCorrectCategory: true,
-      source: 'comprehensive_list',
-      reason: 'Valid word from curated list'
+      source: 'curated_list',
+      reason: 'Known word from our word list'
     };
   }
-  
-  // Special handling for names - use Behind the Name API
-  if (category === 'name') {
-    const nameValidation = await validateNameWithBehindTheName(cleanWord);
-    
-    if (nameValidation.isValid) {
-      return {
-        isValid: true,
-        isCorrectCategory: true,
-        source: 'behindthename',
-        reason: 'Valid name from Behind the Name database',
-        meaning: nameValidation.meaning,
-        origin: nameValidation.origin,
-        gender: nameValidation.gender
-      };
-    }
-  }
-  
-  // If not in comprehensive lists, try dictionary API
+
   const dictionaryResult = await validateWord(cleanWord);
-  
-  if (dictionaryResult.isValid) {
-    // Check if the dictionary word fits the category
-    const categoryMatch = validateCategoryFromDictionary(cleanWord, category, dictionaryResult);
-    
+
+  if (dictionaryResult.unavailable) {
     return {
+      status: 'unverified',
+      isValid: false,
+      isCorrectCategory: false,
+      source: 'unavailable',
+      reason: 'Could not be checked (dictionary unavailable)'
+    };
+  }
+
+  if (dictionaryResult.isValid) {
+    const fitsCategory = matchesCategory(cleanWord, category, dictionaryResult);
+    return {
+      status: fitsCategory ? 'valid' : 'wrong-category',
       isValid: true,
-      isCorrectCategory: categoryMatch,
+      isCorrectCategory: fitsCategory,
       source: 'dictionary_api',
-      reason: categoryMatch ? 'Valid dictionary word in correct category' : `Dictionary word but not a valid ${category}`,
+      reason: fitsCategory
+        ? 'Valid dictionary word in the right category'
+        : `A real word, but not a ${category}`,
       definition: dictionaryResult.definition
     };
   }
-  
-  // Word not found anywhere
+
+  // Not in the dictionary. For names and places that is expected, so treat it
+  // as unverified; for animals and things it means the word is not real.
+  if (PROPER_NOUN_CATEGORIES.has(category)) {
+    return {
+      status: 'unverified',
+      isValid: false,
+      isCorrectCategory: false,
+      source: 'unknown',
+      reason: `Could not verify this ${category}`
+    };
+  }
+
   return {
+    status: 'not-found',
     isValid: false,
     isCorrectCategory: false,
     source: 'unknown',
-    reason: 'Word not found in dictionary or curated lists'
+    reason: 'Not found in the dictionary'
   };
 }
 
 /**
- * Original category validation for dictionary words
+ * Decides whether a dictionary entry plausibly belongs to a category.
  */
-function validateCategoryFromDictionary(word, category, wordData) {
+function matchesCategory(word, category, wordData) {
   const partOfSpeech = wordData?.partOfSpeech?.toLowerCase() || '';
   const definition = wordData?.definition?.toLowerCase() || '';
-  
+
   switch (category) {
     case 'name':
-      return isLikelyName(word, definition);
+      return isLikelyName(definition);
     case 'place':
-      return isLikelyPlace(word, definition, partOfSpeech);
+      return isLikelyPlace(definition);
     case 'animal':
-      return isLikelyAnimal(word, definition, partOfSpeech);
+      return isLikelyAnimal(definition, partOfSpeech);
     case 'thing':
-      return isLikelyThing(word, definition, partOfSpeech);
+      return isLikelyThing(definition, partOfSpeech);
     default:
       return true;
   }
 }
 
-// Helper functions for category validation
-function isLikelyName(word, definition) {
-  // Common name patterns or if it's capitalized in common usage
-  const nameIndicators = [
-    'given name', 'surname', 'first name', 'last name', 'personal name',
-    'biblical', 'mythological', 'character', 'person named'
-  ];
-  
-  // Check if definition contains name indicators
-  if (nameIndicators.some(indicator => definition.includes(indicator))) {
-    return true;
-  }
-  
-  // Enhanced common names list
-  const commonNames = [
-    'alice', 'bob', 'charlie', 'david', 'emma', 'frank', 'grace', 'henry',
-    'john', 'jane', 'mary', 'mike', 'nancy', 'paul', 'sarah', 'tom',
-    'alex', 'anna', 'ben', 'chris', 'diana', 'eric', 'fiona', 'george',
-    'helen', 'ian', 'julia', 'kevin', 'lisa', 'mark', 'nina', 'oscar',
-    'pete', 'quinn', 'rachel', 'steve', 'tina', 'uma', 'victor', 'wendy',
-    'adam', 'beth', 'carl', 'dana', 'evan', 'faith', 'gary', 'hope',
-    'jack', 'kate', 'luke', 'mia', 'noah', 'olivia', 'rose', 'sam'
-  ];
-  
-  return commonNames.includes(word.toLowerCase());
-}
+const NAME_INDICATORS = [
+  'given name', 'surname', 'first name', 'last name', 'personal name',
+  'biblical', 'mythological', 'character', 'person named'
+];
 
-function isLikelyPlace(word, definition, partOfSpeech) {
-  const placeIndicators = [
-    'city', 'town', 'country', 'state', 'province', 'region', 'area',
-    'location', 'place', 'capital', 'village', 'district', 'county',
-    'continent', 'island', 'mountain', 'river', 'lake', 'ocean', 'sea',
-    'street', 'avenue', 'road', 'building', 'landmark'
-  ];
-  
-  // Check definition for place indicators
-  if (placeIndicators.some(indicator => definition.includes(indicator))) {
-    return true;
-  }
-  
-  // Enhanced common places list
-  const commonPlaces = [
-    'paris', 'london', 'tokyo', 'beijing', 'moscow', 'rome', 'berlin',
-    'madrid', 'amsterdam', 'vienna', 'prague', 'budapest', 'warsaw',
-    'stockholm', 'oslo', 'copenhagen', 'helsinki', 'athens', 'dublin',
-    'lisbon', 'brussels', 'zurich', 'geneva', 'munich', 'hamburg',
-    'barcelona', 'milan', 'florence', 'venice', 'naples', 'turin',
-    'australia', 'canada', 'france', 'germany', 'italy', 'spain',
-    'england', 'scotland', 'ireland', 'wales', 'russia', 'china',
-    'japan', 'india', 'brazil', 'mexico', 'egypt', 'greece'
-  ];
-  
-  return commonPlaces.includes(word.toLowerCase());
-}
+const PLACE_INDICATORS = [
+  'city', 'town', 'country', 'state', 'province', 'region', 'area',
+  'location', 'place', 'capital', 'village', 'district', 'county',
+  'continent', 'island', 'mountain', 'river', 'lake', 'ocean', 'sea',
+  'street', 'avenue', 'road', 'building', 'landmark'
+];
 
-function isLikelyAnimal(word, definition, partOfSpeech) {
-  const animalIndicators = [
-    'animal', 'mammal', 'bird', 'fish', 'reptile', 'amphibian', 'insect',
-    'species', 'creature', 'wildlife', 'domestic', 'wild', 'pet',
-    'carnivore', 'herbivore', 'omnivore', 'predator', 'prey'
-  ];
-  
-  // Must be a noun and contain animal-related terms
-  return partOfSpeech.includes('noun') && 
-         animalIndicators.some(indicator => definition.includes(indicator));
-}
+const ANIMAL_INDICATORS = [
+  'animal', 'mammal', 'bird', 'fish', 'reptile', 'amphibian', 'insect',
+  'species', 'creature', 'wildlife', 'domestic', 'wild', 'pet',
+  'carnivore', 'herbivore', 'omnivore', 'predator', 'prey', 'rodent'
+];
 
-function isLikelyThing(word, definition, partOfSpeech) {
-  // Things are typically nouns that aren't names, places, or animals
-  // We'll be inclusive here - if it's a noun, it's likely a "thing"
-  return partOfSpeech.includes('noun') || 
-         partOfSpeech.includes('object') ||
-         definition.includes('device') ||
-         definition.includes('tool') ||
-         definition.includes('object') ||
-         definition.includes('item');
-}
+const isLikelyName = (definition) =>
+  NAME_INDICATORS.some(indicator => definition.includes(indicator));
+
+const isLikelyPlace = (definition) =>
+  PLACE_INDICATORS.some(indicator => definition.includes(indicator));
+
+const isLikelyAnimal = (definition, partOfSpeech) =>
+  partOfSpeech.includes('noun') &&
+  ANIMAL_INDICATORS.some(indicator => definition.includes(indicator));
+
+// "Thing" is deliberately inclusive - any noun counts as an object.
+const isLikelyThing = (definition, partOfSpeech) =>
+  partOfSpeech.includes('noun') ||
+  ['device', 'tool', 'object', 'item'].some(hint => definition.includes(hint));
 
 /**
- * Batch validate multiple words using enhanced validation (comprehensive lists + dictionary)
+ * Validates a list of answers. Duplicate word/category pairs are looked up
+ * once, and lookups run concurrently in small batches to keep scoring fast
+ * without hammering the free API.
+ *
  * @param {Array<{word: string, category: string}>} wordList
- * @returns {Promise<Array<{word: string, category: string, isValid: boolean, isCorrectCategory: boolean, reason: string, source: string}>>}
+ * @returns {Promise<Array<object>>} results in the same order as the input
  */
 export async function batchValidateWords(wordList) {
-  const results = [];
-  
-  // Process words with a small delay to avoid overwhelming the API
-  for (const {word, category} of wordList) {
-    if (!word || !word.trim()) {
-      results.push({
-        word: word || '',
-        category,
+  const BATCH_SIZE = 4;
+  const cacheKey = ({ word, category }) => `${category}:${word.trim().toLowerCase()}`;
+
+  const uniqueEntries = [];
+  const seen = new Set();
+  for (const entry of wordList) {
+    if (!entry.word || !entry.word.trim()) continue;
+    const key = cacheKey(entry);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    uniqueEntries.push(entry);
+  }
+
+  const resultsByKey = new Map();
+  for (let i = 0; i < uniqueEntries.length; i += BATCH_SIZE) {
+    const batch = uniqueEntries.slice(i, i + BATCH_SIZE);
+    const validations = await Promise.all(
+      batch.map(entry => validateWordAndCategory(entry.word, entry.category))
+    );
+    batch.forEach((entry, index) => {
+      resultsByKey.set(cacheKey(entry), validations[index]);
+    });
+  }
+
+  return wordList.map(entry => {
+    if (!entry.word || !entry.word.trim()) {
+      return {
+        word: entry.word || '',
+        category: entry.category,
+        status: 'not-found',
         isValid: false,
         isCorrectCategory: false,
         reason: 'No answer',
         source: 'none'
-      });
-      continue;
+      };
     }
-    
-    // Use enhanced validation that checks comprehensive lists first
-    const validation = await validateWordAndCategory(word, category);
-    
-    results.push({
-      word: word.trim(),
-      category,
-      isValid: validation.isValid,
-      isCorrectCategory: validation.isCorrectCategory,
-      reason: validation.reason,
-      source: validation.source,
-      definition: validation.definition,
-      meaning: validation.meaning,
-      origin: validation.origin,
-      gender: validation.gender
-    });
-    
-    // Small delay to be respectful to APIs (only applies if we hit external APIs)
-    if (validation.source === 'dictionary_api' || validation.source === 'behindthename') {
-      await new Promise(resolve => setTimeout(resolve, 150));
-    }
-  }
-  
-  return results;
+
+    const validation = resultsByKey.get(cacheKey(entry));
+    return {
+      word: entry.word.trim(),
+      category: entry.category,
+      ...validation
+    };
+  });
 }
