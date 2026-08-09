@@ -89,6 +89,11 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
     .map(entry => entry.letter);
   const allLetters = playedLetters.map(entry => entry.letter);
 
+  // Nothing left to pick means the game cannot continue - the alphabet is the
+  // hard limit on rounds, so the only way out is for the owner to end it.
+  const noLettersToPick = usedLetters.length >= ALPHABET.length;
+  const noRoundsLeft = allLetters.length >= ALPHABET.length;
+
   const letter = round?.letter || '';
   const timeLimit = round?.time_limit || 60;
   const secondsLeft = round?.started_at
@@ -615,6 +620,18 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <span className="chip hidden sm:inline-flex font-mono">{room.room_code}</span>
+            {/* The owner can call time at any point, not only between rounds. */}
+            {isRoomOwner && phase !== 'finished' && (
+              <button
+                onClick={endGame}
+                disabled={busy}
+                className="btn btn-coral btn-sm"
+                title="End the game and show final scores"
+              >
+                <Flag className="w-4 h-4" strokeWidth={3} />
+                <span className="hidden sm:inline">End game</span>
+              </button>
+            )}
             <Link href="/" className="btn btn-quiet btn-sm">
               <House className="w-4 h-4" strokeWidth={3} />
             </Link>
@@ -650,7 +667,25 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
               </p>
             )}
 
-            {isLeader ? (
+            {noLettersToPick ? (
+              <div className="panel p-6 text-center">
+                <p className="font-extrabold mb-1">All 26 letters have been played</p>
+                <p className="text-sm text-ink-soft mb-5">
+                  There is nothing left to pick, so this is the end of the game.
+                </p>
+                {isRoomOwner ? (
+                  <button onClick={endGame} disabled={busy} className="btn btn-amber btn-lg">
+                    <Trophy className="w-5 h-5" strokeWidth={3} />
+                    See final results
+                  </button>
+                ) : (
+                  <p className="text-sm font-bold text-ink-soft flex items-center justify-center gap-2">
+                    <Hourglass className="w-4 h-4" strokeWidth={2.5} />
+                    Waiting for {activePlayers[0]?.name} to end the game
+                  </p>
+                )}
+              </div>
+            ) : isLeader ? (
               <div className="grid grid-cols-6 sm:grid-cols-9 gap-2 sm:gap-3">
                 {ALPHABET.map(option => {
                   const used = usedLetters.includes(option);
@@ -897,7 +932,12 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
             </div>
 
             <div className="card p-5 flex flex-col sm:flex-row gap-3">
-              {isLeader ? (
+              {noRoundsLeft ? (
+                <p className="panel p-4 grow text-sm font-bold text-ink-soft flex items-center gap-2">
+                  <Trophy className="w-4 h-4 shrink-0" strokeWidth={2.5} />
+                  That was the last letter - all 26 have been played.
+                </p>
+              ) : isLeader ? (
                 <button onClick={nextRound} disabled={busy} className="btn btn-leaf btn-lg grow">
                   <ArrowRight className="w-5 h-5" strokeWidth={3} />
                   Next round
@@ -910,9 +950,14 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
               )}
 
               {isRoomOwner && (
-                <button onClick={endGame} disabled={busy} className="btn btn-quiet shrink-0">
-                  <Flag className="w-4 h-4" strokeWidth={3} />
-                  End game
+                <button
+                  onClick={endGame}
+                  disabled={busy}
+                  className={`shrink-0 ${noRoundsLeft ? 'btn btn-amber btn-lg' : 'btn btn-quiet'}`}
+                >
+                  {noRoundsLeft
+                    ? <><Trophy className="w-5 h-5" strokeWidth={3} />See final results</>
+                    : <><Flag className="w-4 h-4" strokeWidth={3} />End game</>}
                 </button>
               )}
             </div>
@@ -966,13 +1011,19 @@ export default function NamePlaceThingGame({ room, players, currentPlayer, gameS
             <div className="card p-6">
               <h2 className="text-lg mb-4">Game summary</h2>
               <div className="grid grid-cols-2 gap-3">
-                <div className="panel p-4">
-                  <p className="text-3xl font-extrabold">{roundNumber}</p>
-                  <p className="text-sm text-ink-soft font-bold">Rounds played</p>
-                </div>
+                {/* Counted from rounds that actually got a letter - ending during
+                    letter selection would otherwise count a round nobody played. */}
                 <div className="panel p-4">
                   <p className="text-3xl font-extrabold">{allLetters.length}</p>
-                  <p className="text-sm text-ink-soft font-bold">Letters used</p>
+                  <p className="text-sm text-ink-soft font-bold">
+                    {allLetters.length === 1 ? 'Round played' : 'Rounds played'}
+                  </p>
+                </div>
+                <div className="panel p-4">
+                  <p className="text-3xl font-extrabold">
+                    {Math.max(0, ...activePlayers.map(p => totalScores[p.id] || 0))}
+                  </p>
+                  <p className="text-sm text-ink-soft font-bold">Top score</p>
                 </div>
               </div>
               {allLetters.length > 0 && (

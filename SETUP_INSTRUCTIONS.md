@@ -58,6 +58,23 @@ each file (not the filename) and hit Run:
    appear; nothing else is affected.
 4. **`database_migration_4.sql`** - adds Word Duel. Required before that game
    can be played. Also idempotent.
+5. **`database_migration_5.sql`** - repairs four foreign keys from the original
+   schema. Required; see below. Also idempotent.
+
+### What migration 5 fixes
+
+Four foreign keys point at `players(id)` with no `ON DELETE` action. Without
+the fix:
+
+- **Leave room silently fails** for anyone who has led a round or started a
+  game. The delete is refused with error 23503 and the button appears to do
+  nothing.
+- **`cleanup_inactive_rooms()` can never delete a room that has played a
+  round**, because deleting the room cascades to its players and that delete is
+  then refused. This is why old rooms accumulate indefinitely.
+
+They become `ON DELETE SET NULL` rather than `CASCADE`, so a departing leader
+does not take the round and everyone's answers with them.
 
 Migration 4 is worth understanding: the secret words are deliberately **not
 readable by the browser**. `SELECT` on `wordle_words.word` is revoked from the
