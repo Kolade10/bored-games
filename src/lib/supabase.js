@@ -61,3 +61,20 @@ export const clearRoomPlayerId = (roomCode) => {
   if (typeof window === 'undefined' || !roomCode) return
   localStorage.removeItem(playerIdKey(roomCode))
 }
+
+/**
+ * Room codes this browser has a seat in, newest first. These are only local
+ * hints - a room may since have been deleted or the player removed, so callers
+ * must confirm against the database before showing anything.
+ */
+export const getJoinedRoomCodes = () => {
+  if (typeof window === 'undefined') return []
+
+  const prefix = 'boredgame:player:'
+  const codes = []
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i)
+    if (key?.startsWith(prefix)) codes.push(key.slice(prefix.length))
+  }
+  return codes
+}

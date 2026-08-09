@@ -18,6 +18,7 @@ import {
 } from 'lucide-react';
 import TicTacToeGame from '@/components/TicTacToeGame';
 import NamePlaceThingGame from '@/components/NamePlaceThingGame';
+import RoomChat from '@/components/RoomChat';
 
 const GAME_TITLES = {
   'tic-tac-toe': 'Tic Tac Toe',
@@ -307,11 +308,23 @@ export default function RoomLobby() {
     );
   }
 
-  // A live session takes over the screen for everyone in the room.
+  // A live session takes over the screen for everyone in the room. Chat rides
+  // along on top so players can talk mid-game.
   if (currentPlayer && gameSession && gameSession.status === 'playing') {
     const gameProps = { room, players, currentPlayer, gameSession };
-    if (room.game_type === 'tic-tac-toe') return <TicTacToeGame {...gameProps} />;
-    if (room.game_type === 'name-place-thing') return <NamePlaceThingGame {...gameProps} />;
+    const game =
+      room.game_type === 'tic-tac-toe' ? <TicTacToeGame {...gameProps} /> :
+      room.game_type === 'name-place-thing' ? <NamePlaceThingGame {...gameProps} /> :
+      null;
+
+    if (game) {
+      return (
+        <>
+          {game}
+          <RoomChat room={room} currentPlayer={currentPlayer} />
+        </>
+      );
+    }
   }
 
   const gameTitle = GAME_TITLES[room.game_type] || room.game_type;
@@ -536,6 +549,8 @@ export default function RoomLobby() {
           </ul>
         </div>
       </div>
+
+      <RoomChat room={room} currentPlayer={currentPlayer} />
     </div>
   );
 }

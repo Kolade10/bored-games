@@ -3,6 +3,7 @@ import {
   ArrowRight, Clock, Gauge, Grid3x3, Link2, Paintbrush, PencilLine, Users
 } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
+import YourRooms from "@/components/YourRooms";
 
 const GAMES = [
   {
@@ -113,6 +114,9 @@ export default function Home() {
           </div>
         </div>
       </section>
+
+      {/* Rooms this browser is already in - renders nothing when there are none */}
+      <YourRooms />
 
       {/* Games */}
       <section className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-8 pb-20">

@@ -10,6 +10,8 @@ share the six-character code, and play in real time.
 - **Room System**: Create and join game rooms with unique codes
 - **Real-time Multiplayer**: Live game updates using Supabase realtime
 - **Spectator Mode**: Watch when a room is already full
+- **Room Chat**: Talk to everyone in the room, in the lobby and mid-game
+- **Your Rooms**: The home page lists rooms you still have a seat in
 - **No accounts**: Just pick a name
 
 ## Getting Started

@@ -11,12 +11,12 @@
 
 export const COMPREHENSIVE_NAMES = [
   // A
-  'aaron', 'abigail', 'adam', 'adaeze', 'ade', 'adebayo', 'adrian', 'ahmed', 'aisha', 'alan',
+  'aaron', 'abigail', 'adam', 'adaeze', 'ade', 'adebayo', 'adebare', 'azeezat', 'adrian', 'ahmed', 'aisha', 'alan',
   'albert', 'alex', 'alexander', 'alice', 'amaka', 'amanda', 'amara', 'amina', 'amy', 'ana',
   'anders', 'andrea', 'andrew', 'angela', 'anna', 'anne', 'anthony', 'antonio', 'arthur',
   'ashley', 'austin', 'ayesha', 'ayo',
   // B
-  'barbara', 'beatrice', 'ben', 'benjamin', 'bernard', 'beth', 'betty', 'bianca', 'bilal',
+  'barbara', 'beatrice', 'ben', 'bare', 'benjamin', 'bernard', 'beth', 'betty', 'bianca', 'bilal',
   'blake', 'bola', 'bolanle', 'bonnie', 'boris', 'brandon', 'brenda', 'brian', 'bruce',
   'bruno', 'bryan', 'bukola', 'byron',
   // C
@@ -52,7 +52,7 @@ export const COMPREHENSIVE_NAMES = [
   // K
   'kabir', 'kai', 'kamal', 'kamala', 'karen', 'karim', 'kate', 'katherine', 'kathleen',
   'katrina', 'kayode', 'keith', 'kelly', 'kenneth', 'kevin', 'khalid', 'kim', 'kimberly',
-  'kofi', 'kolade', 'konstantin', 'kwame', 'kyle',
+  'kofi', 'kolade', 'konstantin', 'kwame', 'kyle', 'kolade', 'kola',
   // L
   'lara', 'larry', 'laura', 'lauren', 'lawrence', 'layla', 'leah', 'lee', 'leila', 'leo',
   'leon', 'leonard', 'leslie', 'liam', 'lila', 'lily', 'linda', 'lisa', 'liu', 'logan',
@@ -104,7 +104,9 @@ export const COMPREHENSIVE_NAMES = [
   'yuki', 'yuri', 'yusuf', 'yvette', 'yvonne',
   // Z
   'zachary', 'zahra', 'zainab', 'zane', 'zara', 'zeke', 'zelda', 'zeynep', 'zoe', 'zola',
-  'zoya', 'zubair', 'zuri'
+  'zoya', 'zubair', 'zuri',
+  // Extended additions
+  'abdullah','abraham','abram','adelaide','adeline','adrian','agnes','ahmad','alaina','alan','alana','alejandro','alexis','alfred','alicia','aline','alison','allison','alma','alvin','amber','amelia','andre','angel','angelica','angela','anita','annabelle','annette','archie','ari','ariana','ariel','armand','arnold','ashleigh','astrid','audrey','aurora','avery','barry','becky','benedict','benny','bernice','blair','boaz','brad','bradley','brett','brianna','bridget','brooke','calvin','candace','candy','carla','carlton','casey','cassidy','cedric','celeste','celia','charlie','chase','chelsea','claire','clark','claudia','cody','cole','colleen','cora','corey','courtney','crystal','daisy','dakota','daphne','darrell','darren','daryl','dean','delia','demi','denise','desmond','devon','dominique','doris','drake','drew','duke','duncan','eden','edwin','eleanor','elise','elsie','elvis','emmanuel','enoch','erica','erin','errol','evan','eve','faith','felicia','finley','floyd','francisca','frankie','gabriella','gavin','geoffrey','geraldine','gillian','giulia','gordon','guadalupe','gwendolyn','harvey','heidi','hope','hunter','ian','irene','isabel','jackie','jacqueline','jared','jasper','jayden','jennie','jill','jimmy','jonas','josef','joyce','judy','kaden','kaitlyn','karl','kendra','kieran','kingsley','lara','lauren','leonardo','lexi','lola','lorraine','lucas','maddison','madeline','maggie','marcel','marceline','marco','marcus','mariah','marina','marvin','max','maxwell','melanie','melvin','meredith','micah','miles','miranda','naira','nana','natalie','nathaniel','nehemiah','nichole','nigel','nora','oliver','orlando','otis','parker','phoenix','quinn','raina','ramsey','reagan','reuben','riley','riley','sabrina','samira','sasha','savannah','scarlett','selena','serena','shawn','simon','simeon','skye','sloane','sophia','spencer','summer','tabitha','talia','tanner','terrence','theodore','tia','tiffany','tristan','valentine','vernon','warren','whitney','xavier','xenia','xenia','yasmine','yvette','zachariah','zain','zara','zephaniah','zion',
 ];
 
 export const COMPREHENSIVE_PLACES = [
@@ -212,7 +214,9 @@ export const COMPREHENSIVE_PLACES = [
   'yokohama', 'yola', 'york', 'yorkshire', 'yosemite', 'yukon',
   // Z
   'zagreb', 'zambia', 'zamfara', 'zanzibar', 'zaragoza', 'zaria', 'zhengzhou', 'zimbabwe',
-  'zurich'
+  'zurich',
+  // Extended additions
+  'aberdeen','abkhazia','adana','aden','adriatic','africa','agadez','ahmedabad','ajman','alabama','albania','alexandria','almaty','amman','amritsar','andaman','andorra','angola','antwerp','appalachia','aruba','ashgabat','asmara','astana','asuncion','athabasca','atlantic','auckland','austin','avignon','badajoz','baffin','baghdad','baltic','bandung','bangui','barcelona','basel','baton rouge','beirut','belgrade','belmopan','benin city','benghazi','bermuda','bhopal','bilbao','bissau','blantyre','bloemfontein','bogota','bridgetown','brussels','bucharest','bujumbura','cali','cambodia','cambridge','canberra','cape verde','cartagena','cayman islands','central african republic','chicago','christchurch','cincinnati','cotonou','crete','curacao','damascus','dar es salaam','darwin','delhi','denmark','dominican republic','douala','dresden','dushanbe','east timor','edinburgh','essen','evansville','exeter','faisalabad','falkland islands','faroe islands','fez','flint','fortaleza','fribourg','gaborone','gaza','georgetown','graz','guadalajara','guangzhou','guernsey','hamilton','hangzhou','hannover','harare','havana','helsinki','herzegovina','hilo','hobart','ibadan','ibiza','indore','innsbruck','isfahan','jakarta','jammu','japan','jilin','juba','juneau','kairouan','kampala','kanpur','karlsruhe','kashmir','kharkiv','kigali','kingstown','kirkuk','la paz','lancashire','lanzarote','las vegas','leicester','libya','lille','limpopo','lome','luanda','lugano','malabo','malaga','malmo','managua','mandalay','manila','maracaibo','marrakesh','massachusetts','matola','mbabane','medan','melbourne','merida','mombasa','monrovia','marrakech','nairobi','nagaland','namibia','new jersey','new mexico','new orleans','new york','new zealand','niamey','nicosia','niger','nile','okinawa','orlando','ouagadougou','panama city','parma','peshawar','pittsburgh','plovdiv','porto','quebec','quito','rabat','reunion','rotterdam','salvador','samarkand','san antonio','san jose','san juan','santa fe','santo domingo','sarajevo','seville','shenzhen','sichuan','sochi','stavanger','tbilisi','tenerife','toulouse','tripoli','uttarakhand','valletta','vancouver','venezia','verona','victoria falls','windhoek','wroclaw','xalapa','xiamen','xining','yangon','yogyakarta','zadar','zanzibar city','zhenjiang','zhuhai',
 ];
 
 export const COMPREHENSIVE_ANIMALS = [
@@ -289,7 +293,9 @@ export const COMPREHENSIVE_ANIMALS = [
   // Y
   'yabby', 'yak', 'yellowfin', 'yellowhammer', 'yellowjacket',
   // Z
-  'zander', 'zebra', 'zebu', 'zorilla'
+  'zander', 'zebra', 'zebu', 'zorilla',
+  // Extended additions
+  'abalone','agama','alewife','alligator gar','amphibian','anole','ape','arctic fox','arctic hare','asp','auk','auklet','babirusa','barbel','barnacle','basilisk','beetle','beluga','bilby','bird','bird of paradise','blue jay','blue whale','booby','bonobo','brook trout','buffalo','caiman','calf','camel spider','caracal','cassowary','catbird','cavy','chamois','chevrotain','chinchilla','cichlid','coati','cockle','cormorant','coucal','cuttlefish','dace','degu','dik-dik','dodo','dotterel','dragonet','drongo','dunlin','duiker','earthstar','earwig','eider','eland','elephant seal','elk','ermine','falcon','field mouse','fin whale','fisher','flicker','fossa','fruit bat','fruit fly','galago','gar','gargoyle gecko','gator','gharial','glowworm','goby','golden eagle','goshawk','grayling','grebe','grison','groundhog','guanaco','guar','guillemot','guinea fowl','gyrfalcon','hagfish','hammerhead','hartebeest','harvestman','hawk moth','hermit crab','herring gull','hoatzin','hoopoe','ibex','insect','jackdaw','jaguarundi','jaybird','joey','kestrel','killdeer','king cobra','king crab','kingfisher','kinkajou','lamprey','leafbird','leafhopper','leech','leopard seal','lionfish','louse','lungfish','mantid','marlin','marmot','mastodon','mayfly','mole crab','monarch butterfly','mongoose','monitor lizard','moray eel','mudskipper','musk deer','musk ox','myotis','nautilus','newfoundland','nighthawk','ocelot','oilbird','olm','oryx','pademelon','parakeet','peafowl','pelican eel','pika','pilot whale','pintail','potoo','prairie dog','praying mantis','puff adder','quagga','quailfish','quoll','rabbitfish','raccoon dog','ragworm','ratfish','red panda','rockfish','rook','sable','sailfish','saiga','salamander','sand dollar','sandpiper','sapsucker','sawfish','scoter','sea lion','sea otter','sea snake','serpent','shrike','silverfish','skate','skink','smelt','snow leopard','snowy owl','sole','springbok','squid','sturgeon','sunfish','suricate','swallow','swordtail','takin','tapeworm','tarsier','tench','thornback','thrush','tick','tiger shark','tit','tree frog','trilobite','tsetse fly','tuatara','turaco','turbot','uakari','unicornfish','vampire bat','vampire squid','wagtail','water buffalo','waterbuck','water vole','waxwing','whippoorwill','wild boar','wildcat','wildebeest','wolf spider','woolly monkey','wrasse','x-ray tetra','xerus squirrel','yabby','yellow perch','yeti crab','zebra shark','zebra finch','zebu','zorilla',
 ];
 
 export const COMPREHENSIVE_THINGS = [
@@ -353,7 +359,7 @@ export const COMPREHENSIVE_THINGS = [
   'printer', 'projector', 'pump', 'purse', 'puzzle', 'pyramid',
   // Q
   'quadrant', 'quarter', 'quartz', 'quiche', 'quill', 'quilt', 'quiver',
-  // R
+    // R
   'rack', 'radiator', 'radio', 'rag', 'rake', 'ramp', 'razor', 'receipt', 'recorder',
   'refrigerator', 'remote', 'ribbon', 'ring', 'robe', 'rocket', 'rod', 'rope', 'router',
   'ruler', 'rug',
@@ -386,7 +392,9 @@ export const COMPREHENSIVE_THINGS = [
   'yacht', 'yam', 'yardstick', 'yarn', 'yearbook', 'yeast', 'yogurt', 'yoke', 'yolk', 'yoyo',
   'yurt',
   // Z
-  'zeppelin', 'zinc', 'zip', 'zipper', 'zither', 'zucchini'
+  'zeppelin', 'zinc', 'zip', 'zipper', 'zither', 'zucchini',
+  // Extended additions
+  'air conditioner','air fryer','air mattress','alarm clock','almanac','amplifier','antenna','arcade machine','ashtray','atlas','awning','backhoe','badge','badminton racket','barometer','baseball','baseball bat','basket','basketball','bedsheet','bin','binder','blackboard','blinds','blow dryer','blueprint','boomerang','bookshelf','bottle opener','bow','bowtie','brace','briefcase','brochure','buckle','bullhorn','bunk bed','button','cage','camerabag','cannister','canoe','card','cardboard','carriage','cash register','cassette','cello','cement mixer','clipboard','clock','coaster','coffee maker','coffee table','combination lock','compass','console','cookie cutter','cooler','cradle','crayon','crutch','cupboard','cutlery','cymbal','djembe','doormat','dumbbell','dustbin','e-reader','electric fan','electric kettle','extension cord','file cabinet','fire extinguisher','fireplace','fishing rod','flagpole','flash drive','flashlight','folding chair','footstool','football','frisbee','gamepad','garbage can','garden hose','gas cooker','gavel','gift box','glue gun','gramophone','grinder','hairbrush','hairdryer','hand mirror','handkerchief','harmonica','hard drive','haversack','headboard','headset','highlighter','hockey stick','hula hoop','ice tray','ink pen','intercom','iron','jack','jigsaw puzzle','keyring','kitchen sink','ladder','lawn chair','leather','lollipop','loudspeaker','mailbag','mailbox','mannequin','measuring cup','measuring tape','megaphone','memory card','mop bucket','mousepad','music box','notepad','oil lamp','paint roller','palette','paperclip','paperweight','parasol','pedal','pencil case','periscope','picnic basket','ping-pong paddle','pocketknife','polaroid camera','power bank','power drill','printer cartridge','projector screen','puncher','raincoat','rattle','record player','reel','ribbon','rocking chair','roller skates','rolling pin','sackcloth','safety pin','sandbag','satnav','scooping net','sewing machine','shaving brush','shopping cart','sideboard','sketchbook','sleeping bag','slingshot','snowboard','spatula','spool','sprinkler','stapler remover','stepladder','surfboard','swimsuit','tablecloth','tack','tambourine','thermostat','thumbtack','toothpaste','tool','toolkit','torchlight','trash can','trellis','tripod','tuning fork','turntable','typewriter','vacuum cleaner','waffle iron','walking stick','wardrobe','washbasin','water bottle','water filter','webcam','weighing scale','wheelchair','whiteboard','windshield','windowpane','wireless mouse','wooden spoon','workbench','wrench','xylophone','yardstick','yo-yo','zip bag','zip tie','zither','zoo cage',
 ];
 
 const LISTS = {

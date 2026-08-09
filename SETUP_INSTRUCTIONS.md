@@ -53,6 +53,9 @@ each file (not the filename) and hit Run:
    `CREATE TABLE`.
 2. **`database_migration_2.sql`** - required, on new and existing databases
    alike. It is idempotent and safe to re-run.
+3. **`database_migration_3.sql`** - adds the `chat_messages` table for in-room
+   chat. Also idempotent. Until it is run the chat button simply does not
+   appear; nothing else is affected.
 
 `cat database_migration_2.sql` prints it, or `xclip -sel clip < database_migration_2.sql`
 copies it straight to the clipboard.
