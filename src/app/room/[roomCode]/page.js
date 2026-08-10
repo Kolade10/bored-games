@@ -19,12 +19,22 @@ import {
 import TicTacToeGame from '@/components/TicTacToeGame';
 import NamePlaceThingGame from '@/components/NamePlaceThingGame';
 import WordleGame from '@/components/WordleGame';
+import TriviaGame from '@/components/TriviaGame';
 import RoomChat from '@/components/RoomChat';
 
 const GAME_TITLES = {
   'tic-tac-toe': 'Tic Tac Toe',
   'name-place-thing': 'Name Place Animal Thing',
-  'wordle': 'Word Duel'
+  'wordle': 'Word Duel',
+  'trivia': 'Trivia'
+};
+
+// Trivia is worth playing alone - it is also just a question feed.
+const MIN_PLAYERS_BY_GAME = {
+  'tic-tac-toe': 2,
+  'name-place-thing': 2,
+  'wordle': 2,
+  'trivia': 1
 };
 
 const GAME_RULES = {
@@ -46,10 +56,14 @@ const GAME_RULES = {
     'You get one guess more than the word is long.',
     'Green means right letter, right place. Amber means right letter, wrong place.',
     'Solve it to win; if you both solve it, fewest guesses takes the round.'
+  ],
+  'trivia': [
+    'The room owner picks the category, difficulty and seconds per question.',
+    'Everyone gets the same ten questions in the same order.',
+    'The answer shows once everyone has answered or the timer runs out.',
+    'One point per correct answer.'
   ]
 };
-
-const MIN_PLAYERS = 2;
 
 export default function RoomLobby() {
   const params = useParams();
@@ -175,7 +189,8 @@ export default function RoomLobby() {
     .sort((a, b) => (a.player_order || 0) - (b.player_order || 0));
   const spectators = players.filter(p => p.is_spectator);
 
-  const hasEnoughPlayers = activePlayers.length >= MIN_PLAYERS;
+  const minPlayers = MIN_PLAYERS_BY_GAME[room?.game_type] ?? 2;
+  const hasEnoughPlayers = activePlayers.length >= minPlayers;
   const isRoomOwner = !!currentPlayer && activePlayers[0]?.id === currentPlayer.id;
   const noActiveGameSession = !gameSession || gameSession.status === 'finished';
   const canStartGame =
@@ -340,6 +355,7 @@ export default function RoomLobby() {
       room.game_type === 'tic-tac-toe' ? <TicTacToeGame {...gameProps} /> :
       room.game_type === 'name-place-thing' ? <NamePlaceThingGame {...gameProps} /> :
       room.game_type === 'wordle' ? <WordleGame {...gameProps} /> :
+      room.game_type === 'trivia' ? <TriviaGame {...gameProps} /> :
       null;
 
     if (game) {
@@ -454,8 +470,9 @@ export default function RoomLobby() {
               </li>
             ))}
 
-            {/* Empty seats make the wait legible */}
-            {Array.from({ length: Math.max(0, room.max_players - activePlayers.length) }).map((_, i) => (
+            {/* Only the seats still needed to start - a room that holds eight
+                should not show seven empty rows when one player is enough. */}
+            {Array.from({ length: Math.max(0, minPlayers - activePlayers.length) }).map((_, i) => (
               <li
                 key={`empty-${i}`}
                 className="panel p-4 flex items-center gap-3 border-dashed opacity-70"
@@ -507,7 +524,7 @@ export default function RoomLobby() {
               <p className="panel p-4 mb-4 text-sm font-bold text-ink-soft flex items-center gap-2">
                 <Hourglass className="w-4 h-4 shrink-0" strokeWidth={2.5} />
                 {!hasEnoughPlayers
-                  ? `Waiting for players (${activePlayers.length}/${MIN_PLAYERS})`
+                  ? `Waiting for players (${activePlayers.length}/${minPlayers})`
                   : currentPlayer.is_spectator
                     ? 'You are watching - the room owner starts the game'
                     : !isRoomOwner

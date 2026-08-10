@@ -1,6 +1,7 @@
 import Link from "next/link";
 import {
-  ArrowRight, Clock, Gauge, Grid3x3, Link2, Paintbrush, PencilLine, Swords, Users
+  ArrowRight, BrainCircuit, Clock, Gauge, Grid3x3, Link2, Paintbrush, PencilLine,
+  Swords, Users
 } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
 import YourRooms from "@/components/YourRooms";
@@ -37,6 +38,17 @@ const GAMES = [
     estimatedTime: '3-8 min',
     accent: 'leaf',
     Icon: Swords,
+    available: true
+  },
+  {
+    id: 'trivia',
+    title: 'Trivia',
+    description: 'Ten general knowledge questions with a countdown. Play against friends, or on your own for the questions alone.',
+    players: '1-8 players',
+    difficulty: 'Any',
+    estimatedTime: '3-10 min',
+    accent: 'teal',
+    Icon: BrainCircuit,
     available: true
   },
   {

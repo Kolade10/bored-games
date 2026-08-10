@@ -60,6 +60,15 @@ each file (not the filename) and hit Run:
    can be played. Also idempotent.
 5. **`database_migration_5.sql`** - repairs four foreign keys from the original
    schema. Required; see below. Also idempotent.
+6. **`database_migration_6.sql`** - adds Trivia. Required before that game can
+   be played. Also idempotent.
+
+Migration 6 follows the same pattern as 4: `SELECT` on
+`trivia_questions.correct_answer` is revoked from `anon`, so the browser can
+read the question and its four options but not which one is right. Answers come
+back from `trivia_submit_answer()` the moment you lock a choice in, and
+`trivia_reveal()` releases the answer to everyone once the timer expires or
+every player has answered.
 
 ### What migration 5 fixes
 

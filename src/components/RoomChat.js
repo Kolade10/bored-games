@@ -9,6 +9,22 @@ const MAX_LENGTH = 500;
 // Postgres "relation does not exist" / PostgREST "table not found in schema".
 const MISSING_TABLE = new Set(['42P01', 'PGRST205']);
 
+// Unread is derived from a persisted "last seen" timestamp rather than counted
+// from live events. Counting events only works while the component is mounted,
+// so the badge used to reset every time the lobby handed over to a game, and
+// messages that arrived before you opened the room never counted at all.
+const seenKey = (roomId) => `boredgame:chatseen:${roomId}`;
+
+const getLastSeen = (roomId) => {
+  if (typeof window === 'undefined' || !roomId) return 0;
+  return Number(localStorage.getItem(seenKey(roomId)) || 0);
+};
+
+const setLastSeen = (roomId, value) => {
+  if (typeof window === 'undefined' || !roomId) return;
+  localStorage.setItem(seenKey(roomId), String(value));
+};
+
 /**
  * Chat panel for everyone in a room, players and spectators alike. Rendered as
  * a floating button so it can sit over the lobby and both games without
@@ -19,15 +35,31 @@ export default function RoomChat({ room, currentPlayer }) {
   const [messages, setMessages] = useState([]);
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
-  const [unread, setUnread] = useState(0);
+  const [lastSeen, setLastSeenState] = useState(0);
   const [unavailable, setUnavailable] = useState(false);
   const [error, setError] = useState('');
 
   const listRef = useRef(null);
-  const openRef = useRef(open);
-  openRef.current = open;
-
   const roomId = room?.id;
+
+  // Anything newer than the last time this browser had the panel open, from
+  // someone other than us, is unread.
+  const unread = messages.filter(
+    m =>
+      m.player_id !== currentPlayer?.id &&
+      new Date(m.created_at).getTime() > lastSeen
+  ).length;
+
+  const markSeen = useCallback(() => {
+    if (!roomId) return;
+    const now = Date.now();
+    setLastSeen(roomId, now);
+    setLastSeenState(now);
+  }, [roomId]);
+
+  useEffect(() => {
+    setLastSeenState(getLastSeen(roomId));
+  }, [roomId]);
 
   const loadMessages = useCallback(async () => {
     if (!roomId) return;
@@ -73,29 +105,20 @@ export default function RoomChat({ room, currentPlayer }) {
         setMessages(prev =>
           prev.some(m => m.id === message.id) ? prev : [...prev, message]
         );
-
-        // Only count messages that arrive while the panel is shut, and never
-        // our own - those are already on screen.
-        if (!openRef.current && message.player_id !== currentPlayer?.id) {
-          setUnread(count => count + 1);
-        }
       })
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [roomId, currentPlayer?.id]);
+  }, [roomId]);
 
-  // Stick to the newest message.
+  // Stick to the newest message, and treat anything seen while open as read.
   useEffect(() => {
-    if (!open || !listRef.current) return;
-    listRef.current.scrollTop = listRef.current.scrollHeight;
-  }, [messages, open]);
-
-  useEffect(() => {
-    if (open) setUnread(0);
-  }, [open]);
+    if (!open) return;
+    if (listRef.current) listRef.current.scrollTop = listRef.current.scrollHeight;
+    markSeen();
+  }, [messages, open, markSeen]);
 
   const send = async (e) => {
     e.preventDefault();

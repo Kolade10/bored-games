@@ -8,6 +8,7 @@ share the six-character code, and play in real time.
 - **Tic Tac Toe**: Classic 3x3 grid game for two players
 - **Name Place Animal Thing**: Word game with a shared letter and a 60s timer
 - **Word Duel**: Head-to-head Wordle where you each set the other's word
+- **Trivia**: Ten general knowledge questions from [OpenTDB](https://opentdb.com), solo or against friends
 - **Room System**: Create and join game rooms with unique codes
 - **Real-time Multiplayer**: Live game updates using Supabase realtime
 - **Spectator Mode**: Watch when a room is already full
@@ -98,6 +99,13 @@ Scoring per answer:
 | 5 | Unique answer that could not be verified (proper nouns, dictionary offline) |
 | 3 | Unverified answer another player also gave |
 | 0 | Wrong starting letter, not a real word, or wrong category |
+
+### Trivia
+- The room owner picks a category, a difficulty, and 5, 10, 15 or 30 seconds per question
+- Ten multiple-choice questions, the same set in the same order for everyone
+- A question closes once every player has answered or the timer runs out, then the answer shows
+- One point per correct answer
+- A room of one works fine, for when you just want the questions
 
 ### Word Duel
 - You each secretly set a real word for the other, 5 to 10 letters
