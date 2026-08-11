@@ -9,6 +9,7 @@ share the six-character code, and play in real time.
 - **Name Place Animal Thing**: Word game with a shared letter and a 60s timer
 - **Word Duel**: Head-to-head Wordle where you each set the other's word
 - **Trivia**: Ten general knowledge questions from [OpenTDB](https://opentdb.com), solo or against friends
+- **Guess Me**: A couples game - one answers about themselves, the other predicts
 - **Room System**: Create and join game rooms with unique codes
 - **Real-time Multiplayer**: Live game updates using Supabase realtime
 - **Spectator Mode**: Watch when a room is already full
@@ -100,6 +101,22 @@ Scoring per answer:
 | 3 | Unverified answer another player also gave |
 | 0 | Wrong starting letter, not a real word, or wrong category |
 
+### Guess Me
+- Two players; one answers a question about themselves in secret, the other predicts it
+- Roles swap every round, so you both answer and guess equally
+- 5, 10, 15 or 20 rounds, with the categories you choose
+- Correct prediction 10 points, hard questions 15, streaks multiply it
+- Number and slider questions give partial credit for being close
+- Open-ended questions are judged by the answerer - they decide if "Tokyo" counts as "Japan"
+- Questions about which of you is which ("who is the better driver?") show both
+  players the same two names rather than "Me"/"You", so the answerer picking
+  themselves and the guesser picking that same person counts as a match
+
+Question bank lives in [src/lib/guessMe](src/lib/guessMe), one file per
+category. Run `node test-guessme.mjs` after editing it: the test enforces
+option counts, unique ids and wording, at least ten questions per category, and
+that selection never puts two similar questions back to back.
+
 ### Trivia
 - The room owner picks a category, a difficulty, and 5, 10, 15 or 30 seconds per question
 - Ten multiple-choice questions, the same set in the same order for everyone
@@ -120,7 +137,7 @@ either are scored as "unverified" rather than rejected, since no dictionary
 covers every proper noun.
 
 The lists live in [comprehensiveWordLists.js](src/lib/comprehensiveWordLists.js)
-— roughly 1,900 words grouped by first letter, covering all 26 letters in every
+— roughly 2,700 words grouped by first letter, covering all 26 letters in every
 category. Lookups ignore case, accents, hyphens and spacing, and accept plurals
 for animals and things (`foxes` matches `fox`). When adding words, keep them
 lowercase, keep the letter grouping, and re-run:

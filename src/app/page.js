@@ -1,7 +1,7 @@
 import Link from "next/link";
 import {
-  ArrowRight, BrainCircuit, Clock, Gauge, Grid3x3, Link2, Paintbrush, PencilLine,
-  Swords, Users
+  ArrowRight, BrainCircuit, Clock, Gauge, Grid3x3, Heart, Link2, Paintbrush,
+  PencilLine, Swords, Users
 } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
 import YourRooms from "@/components/YourRooms";
@@ -49,6 +49,17 @@ const GAMES = [
     estimatedTime: '3-10 min',
     accent: 'teal',
     Icon: BrainCircuit,
+    available: true
+  },
+  {
+    id: 'guess-me',
+    title: 'Guess Me',
+    description: 'A couples game. One of you answers about yourself, the other tries to predict it. Roles swap every round.',
+    players: '2 players',
+    difficulty: 'Easy',
+    estimatedTime: '5-20 min',
+    accent: 'coral',
+    Icon: Heart,
     available: true
   },
   {

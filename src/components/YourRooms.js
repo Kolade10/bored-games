@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { supabase, getJoinedRoomCodes, clearRoomPlayerId, getRoomPlayerId } from '@/lib/supabase';
-import { ArrowRight, BrainCircuit, Eye, Grid3x3, PencilLine, Play, Swords, Users, X } from 'lucide-react';
+import { ArrowRight, BrainCircuit, Eye, Grid3x3, Heart, PencilLine, Play, Swords, Users, X } from 'lucide-react';
 
 const GAMES = {
   'tic-tac-toe': { title: 'Tic Tac Toe', Icon: Grid3x3 },
   'name-place-thing': { title: 'Name Place Animal Thing', Icon: PencilLine },
   'wordle': { title: 'Word Duel', Icon: Swords },
-  'trivia': { title: 'Trivia', Icon: BrainCircuit }
+  'trivia': { title: 'Trivia', Icon: BrainCircuit },
+  'guess-me': { title: 'Guess Me', Icon: Heart }
 };
 
 /**

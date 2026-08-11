@@ -20,13 +20,15 @@ import TicTacToeGame from '@/components/TicTacToeGame';
 import NamePlaceThingGame from '@/components/NamePlaceThingGame';
 import WordleGame from '@/components/WordleGame';
 import TriviaGame from '@/components/TriviaGame';
+import GuessMeGame from '@/components/GuessMeGame';
 import RoomChat from '@/components/RoomChat';
 
 const GAME_TITLES = {
   'tic-tac-toe': 'Tic Tac Toe',
   'name-place-thing': 'Name Place Animal Thing',
   'wordle': 'Word Duel',
-  'trivia': 'Trivia'
+  'trivia': 'Trivia',
+  'guess-me': 'Guess Me'
 };
 
 // Trivia is worth playing alone - it is also just a question feed.
@@ -34,7 +36,8 @@ const MIN_PLAYERS_BY_GAME = {
   'tic-tac-toe': 2,
   'name-place-thing': 2,
   'wordle': 2,
-  'trivia': 1
+  'trivia': 1,
+  'guess-me': 2
 };
 
 const GAME_RULES = {
@@ -62,6 +65,12 @@ const GAME_RULES = {
     'Everyone gets the same ten questions in the same order.',
     'The answer shows once everyone has answered or the timer runs out.',
     'One point per correct answer.'
+  ],
+  'guess-me': [
+    'Each round one of you answers about yourself, in secret.',
+    'The other predicts what they picked.',
+    'Roles swap every round so you both answer and guess equally.',
+    'Correct predictions score 10, hard questions 15, and streaks multiply it.'
   ]
 };
 
@@ -356,6 +365,7 @@ export default function RoomLobby() {
       room.game_type === 'name-place-thing' ? <NamePlaceThingGame {...gameProps} /> :
       room.game_type === 'wordle' ? <WordleGame {...gameProps} /> :
       room.game_type === 'trivia' ? <TriviaGame {...gameProps} /> :
+      room.game_type === 'guess-me' ? <GuessMeGame {...gameProps} /> :
       null;
 
     if (game) {

@@ -1,0 +1,45 @@
+import { yesNo } from './types.js';
+
+// Future - aspirations and hypotheticals.
+export const FUTURE = [
+  { id: 'fut-001', category: 'future', type: 'multiple_choice', difficulty: 'medium',
+    text: 'Where would I want to live eventually?', tags: ['home'],
+    options: ['Where I am now', 'Somewhere quieter', 'A bigger city', 'Another country'] },
+  { id: 'fut-002', category: 'future', type: 'multiple_choice', difficulty: 'medium',
+    text: 'What would my dream house definitely have?', tags: ['home'],
+    options: ['A big kitchen', 'A lot of light', 'Outside space', 'A room just for me'] },
+  { id: 'fut-003', category: 'future', type: 'open_ended', difficulty: 'hard',
+    text: 'What is something I would love to achieve in the next five years?', tags: ['ambition'] },
+  { id: 'fut-004', category: 'future', type: 'multiple_choice', difficulty: 'hard',
+    text: 'If I could instantly learn one skill, what would I choose?', tags: ['skills'],
+    options: ['A language', 'An instrument', 'Cooking properly', 'Something that makes money'] },
+  ...[
+    yesNo('fut-005', 'future', 'medium', 'Do I want to run my own business one day?', ['ambition']),
+    yesNo('fut-006', 'future', 'medium', 'Would I retire early if I could?', ['work']),
+    yesNo('fut-007', 'future', 'hard', 'Do I think about the future more than the present?', ['mindset']),
+    yesNo('fut-008', 'future', 'easy', 'Would I want to live near family?', ['family'])
+  ],
+  { id: 'fut-009', category: 'future', type: 'this_or_that', difficulty: 'medium',
+    text: 'Which future appeals more?', tags: ['lifestyle'],
+    options: ['Busy and full', 'Quiet and simple'] },
+  { id: 'fut-010', category: 'future', type: 'slider', difficulty: 'medium',
+    text: 'How much do I plan for the future?', tags: ['planning'],
+    labels: ['Take it as it comes', 'Everything mapped out'] },
+  { id: 'fut-011', category: 'future', type: 'multiple_choice', difficulty: 'medium',
+    text: 'What would I do first if I never had to work again?', tags: ['hypothetical'],
+    options: ['Travel', 'Start something of my own', 'Rest properly', 'Help people close to me'] },
+  { id: 'fut-012', category: 'future', type: 'number', difficulty: 'hard',
+    text: 'At what age would I ideally want to stop working?', tags: ['work'],
+    min: 30, max: 80, unit: 'years old' },
+  { id: 'fut-013', category: 'future', type: 'multiple_choice', difficulty: 'hard',
+    text: 'What do I most want to be remembered for?', tags: ['legacy'],
+    options: ['Being kind', 'Building something', 'Being there for people', 'Living fully'] },
+  { id: 'fut-014', category: 'future', type: 'open_ended', difficulty: 'hard',
+    text: 'What does a perfect ordinary day look like for me in ten years?', tags: ['vision'] },
+  { id: 'fut-015', category: 'future', type: 'this_or_that', difficulty: 'medium',
+    text: 'Which would I honestly rather have?', tags: ['hypothetical'],
+    options: ['Knowing what happens next', 'Being surprised by it'] },
+  { id: 'fut-016', category: 'future', type: 'multiple_choice', difficulty: 'medium',
+    text: 'What am I most looking forward to this year?', tags: ['near-future'],
+    options: ['Something at work', 'A trip', 'Something with family', 'Honestly nothing specific'] }
+];

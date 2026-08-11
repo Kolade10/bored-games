@@ -1,0 +1,46 @@
+import { yesNo } from './types.js';
+
+// Travel
+export const TRAVEL = [
+  { id: 'tra-001', category: 'travel', type: 'this_or_that', difficulty: 'easy',
+    text: 'Which holiday would I choose?', tags: ['holiday-type'],
+    options: ['Beach', 'City'] },
+  { id: 'tra-002', category: 'travel', type: 'multiple_choice', difficulty: 'easy',
+    text: 'What is my priority on holiday?', tags: ['holiday-type'],
+    options: ['Rest', 'Food', 'Sightseeing', 'Photos'] },
+  { id: 'tra-003', category: 'travel', type: 'open_ended', difficulty: 'medium',
+    text: 'Where would I most want to travel next?', tags: ['destination'] },
+  { id: 'tra-004', category: 'travel', type: 'multiple_choice', difficulty: 'medium',
+    text: 'How do I pack?', tags: ['packing'],
+    options: ['Days in advance', 'Night before', 'An hour before', 'Throw things in and hope'] },
+  ...[
+    yesNo('tra-005', 'travel', 'easy', 'Do I get to the airport very early?', ['airport']),
+    yesNo('tra-006', 'travel', 'easy', 'Would I take a long journey to save money?', ['budget']),
+    yesNo('tra-007', 'travel', 'medium', 'Do I sleep on planes?', ['flying']),
+    yesNo('tra-008', 'travel', 'medium', 'Would I go on holiday completely alone?', ['solo']),
+    yesNo('tra-009', 'travel', 'hard', 'Would I move abroad permanently if it made sense?', ['relocate'])
+  ],
+  { id: 'tra-010', category: 'travel', type: 'multiple_choice', difficulty: 'medium',
+    text: 'What kind of trip suits me best?', tags: ['holiday-type'],
+    options: ['All planned out', 'Rough plan only', 'Completely spontaneous', 'Someone else decides'] },
+  { id: 'tra-011', category: 'travel', type: 'slider', difficulty: 'medium',
+    text: 'How much do I actually enjoy travelling?', tags: ['enjoyment'],
+    labels: ['Rather stay home', 'Always want to go'] },
+  { id: 'tra-012', category: 'travel', type: 'number', difficulty: 'hard',
+    text: 'How many countries would I love to visit in my lifetime?', tags: ['ambition'],
+    min: 1, max: 100, unit: 'countries' },
+  { id: 'tra-013', category: 'travel', type: 'this_or_that', difficulty: 'medium',
+    text: 'Which would I rather?', tags: ['budget'],
+    options: ['One big expensive trip', 'Three small cheap ones'] },
+  { id: 'tra-014', category: 'travel', type: 'multiple_choice', difficulty: 'medium',
+    text: 'What is the worst part of travelling for me?', tags: ['dislikes'],
+    options: ['Packing', 'Airports', 'Long journeys', 'Being away from my bed'] },
+  { id: 'tra-015', category: 'travel', type: 'multiple_choice', difficulty: 'hard',
+    text: 'If we could only visit one place together ever again, where?', tags: ['destination'],
+    options: ['Somewhere we have already been', 'Somewhere neither of us knows', 'Somewhere warm', 'Somewhere close to family'] },
+  { id: 'tra-016', category: 'travel', type: 'multiple_choice', difficulty: 'easy',
+    text: 'What do I do on a long flight?', tags: ['flying'],
+    options: ['Sleep', 'Watch films', 'Read', 'Stare into space'] },
+  { id: 'tra-017', category: 'travel', type: 'open_ended', difficulty: 'hard',
+    text: 'What is the best trip I have ever taken?', tags: ['memory'] }
+];

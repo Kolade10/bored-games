@@ -62,6 +62,12 @@ each file (not the filename) and hit Run:
    schema. Required; see below. Also idempotent.
 6. **`database_migration_6.sql`** - adds Trivia. Required before that game can
    be played. Also idempotent.
+7. **`database_migration_7.sql`** - adds Guess Me. Required before that game can
+   be played. Also idempotent.
+
+Migration 7 hides the answerer's answer from the guesser the same way, and
+scores server-side. The streak multiplier is counted inside the function from
+the actual round history rather than trusted from the client.
 
 Migration 6 follows the same pattern as 4: `SELECT` on
 `trivia_questions.correct_answer` is revoked from `anon`, so the browser can
