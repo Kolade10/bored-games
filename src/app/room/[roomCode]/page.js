@@ -21,6 +21,7 @@ import NamePlaceThingGame from '@/components/NamePlaceThingGame';
 import WordleGame from '@/components/WordleGame';
 import TriviaGame from '@/components/TriviaGame';
 import GuessMeGame from '@/components/GuessMeGame';
+import WhoMoreLikelyGame from '@/components/WhoMoreLikelyGame';
 import RoomChat from '@/components/RoomChat';
 
 const GAME_TITLES = {
@@ -28,7 +29,8 @@ const GAME_TITLES = {
   'name-place-thing': 'Name Place Animal Thing',
   'wordle': 'Word Duel',
   'trivia': 'Trivia',
-  'guess-me': 'Guess Me'
+  'guess-me': 'Guess Me',
+  'who-more-likely': "Who's More Likely?"
 };
 
 // Trivia is worth playing alone - it is also just a question feed.
@@ -37,7 +39,8 @@ const MIN_PLAYERS_BY_GAME = {
   'name-place-thing': 2,
   'wordle': 2,
   'trivia': 1,
-  'guess-me': 2
+  'guess-me': 2,
+  'who-more-likely': 2
 };
 
 const GAME_RULES = {
@@ -71,6 +74,13 @@ const GAME_RULES = {
     'The other predicts what they picked.',
     'Roles swap every round so you both answer and guess equally.',
     'Correct predictions score 10, hard questions 15, and streaks multiply it.'
+  ],
+  'who-more-likely': [
+    'You both privately pick which of you is more likely.',
+    'Both answers are revealed at once.',
+    'Naming the same person is an agreement, worth 10 points.',
+    'Streaks add a bonus at 3, 5, 7 and 10 in a row.',
+    'Longer games end on a double-points round.'
   ]
 };
 
@@ -366,6 +376,7 @@ export default function RoomLobby() {
       room.game_type === 'wordle' ? <WordleGame {...gameProps} /> :
       room.game_type === 'trivia' ? <TriviaGame {...gameProps} /> :
       room.game_type === 'guess-me' ? <GuessMeGame {...gameProps} /> :
+      room.game_type === 'who-more-likely' ? <WhoMoreLikelyGame {...gameProps} /> :
       null;
 
     if (game) {

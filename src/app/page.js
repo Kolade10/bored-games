@@ -1,7 +1,7 @@
 import Link from "next/link";
 import {
-  ArrowRight, BrainCircuit, Clock, Gauge, Grid3x3, Heart, Link2, Paintbrush,
-  PencilLine, Swords, Users
+  ArrowRight, BrainCircuit, Clock, Gauge, Grid3x3, Heart, Laugh, Link2,
+  Paintbrush, PencilLine, Swords, Users
 } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
 import YourRooms from "@/components/YourRooms";
@@ -60,6 +60,17 @@ const GAMES = [
     estimatedTime: '5-20 min',
     accent: 'coral',
     Icon: Heart,
+    available: true
+  },
+  {
+    id: 'who-more-likely',
+    title: "Who's More Likely?",
+    description: 'You both secretly pick which of you is more likely to do something, then find out whether you agree.',
+    players: '2 players',
+    difficulty: 'Easy',
+    estimatedTime: '5-15 min',
+    accent: 'amber',
+    Icon: Laugh,
     available: true
   },
   {

@@ -2,6 +2,7 @@
 //   node test-guessme.mjs
 
 import { QUESTIONS, CATEGORIES, selectQuestions, scoreGuess } from './src/lib/guessMe/index.js';
+import { askAbout } from './src/lib/guessMe/perspective.js';
 
 const OPTION_COUNTS = { multiple_choice: 4, this_or_that: 2, yes_no: 2 };
 let failures = 0;
@@ -79,6 +80,22 @@ for (const q of QUESTIONS) {
   });
 }
 console.log(`  ok    ${tokenQuestions} person options use name tokens`);
+
+// The guesser must never read the question as being about themselves.
+const FIRST_PERSON = /\b(I|my|me|myself|I'm|I'd|I've)\b/i;
+let rewritten = 0;
+for (const q of QUESTIONS) {
+  const asked = askAbout(q.text, 'Kolade');
+  if (FIRST_PERSON.test(asked)) {
+    fail(`${q.id}: still first person for the guesser - "${asked}"`);
+  }
+  if (asked !== q.text) rewritten++;
+  if ((asked.match(/Kolade/g) || []).length > 1) {
+    fail(`${q.id}: name repeated - "${asked}"`);
+  }
+  if (/^[a-z]/.test(asked)) fail(`${q.id}: rewrite lost its capital - "${asked}"`);
+}
+console.log(`  ok    ${rewritten} questions rewrite cleanly for the guesser`);
 
 console.log('\n2. Selection\n');
 for (const rounds of [5, 10, 15, 20]) {

@@ -10,6 +10,7 @@ share the six-character code, and play in real time.
 - **Word Duel**: Head-to-head Wordle where you each set the other's word
 - **Trivia**: Ten general knowledge questions from [OpenTDB](https://opentdb.com), solo or against friends
 - **Guess Me**: A couples game - one answers about themselves, the other predicts
+- **Who's More Likely?**: Both secretly pick which of you is more likely, then compare
 - **Room System**: Create and join game rooms with unique codes
 - **Real-time Multiplayer**: Live game updates using Supabase realtime
 - **Spectator Mode**: Watch when a room is already full
@@ -101,6 +102,22 @@ Scoring per answer:
 | 3 | Unverified answer another player also gave |
 | 0 | Wrong starting letter, not a real word, or wrong category |
 
+### Who's More Likely?
+- Two players; a scenario appears and you both privately pick one of you
+- Both picks are revealed at once - naming the same person is an agreement
+- Agreement scores 10, with streak bonuses at 3, 5, 7 and 10 in a row
+- Games of 10+ rounds end on a double-points round
+- 5, 10, 15 or 20 rounds across 12 categories
+
+Agreement is judged on the **person named, not the button pressed**. If Victor
+picks himself and Kolade picks Victor, they named the same person and that is a
+match - so "Me" from one and the partner's name from the other agree, while
+both pressing "Me" (two different people) does not.
+
+Question bank lives in [src/lib/whoMoreLikely](src/lib/whoMoreLikely), one file
+per category, storing only the stem of each question. Run
+`node test-whomorelikely.mjs` after editing it.
+
 ### Guess Me
 - Two players; one answers a question about themselves in secret, the other predicts it
 - Roles swap every round, so you both answer and guess equally
@@ -108,6 +125,8 @@ Scoring per answer:
 - Correct prediction 10 points, hard questions 15, streaks multiply it
 - Number and slider questions give partial credit for being close
 - Open-ended questions are judged by the answerer - they decide if "Tokyo" counts as "Japan"
+- Each side reads the question from their own angle: the answerer sees "What's my
+  ideal weekend?", the guesser sees "What's Kolade's ideal weekend?"
 - Questions about which of you is which ("who is the better driver?") show both
   players the same two names rather than "Me"/"You", so the answerer picking
   themselves and the guesser picking that same person counts as a match

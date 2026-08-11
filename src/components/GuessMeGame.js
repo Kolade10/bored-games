@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { CATEGORIES, DIFFICULTIES, ROUND_OPTIONS, selectQuestions } from '@/lib/guessMe/index.js';
+import { questionFor } from '@/lib/guessMe/perspective.js';
 import Link from 'next/link';
 import {
   ArrowRight, Brain, Check, CircleAlert, Clapperboard, Flame, Frown, Heart,
@@ -517,10 +518,18 @@ export default function GuessMeGame({ room, players, currentPlayer, gameSession 
                 </span>
               </div>
 
-              <h1 className="text-xl sm:text-2xl mb-2">{question.text}</h1>
+              {/* The answerer reads it in the first person; everyone else reads
+                  it as a question about them. */}
+              <h1 className="text-xl sm:text-2xl mb-2">
+                {questionFor(
+                  question,
+                  iAnswer ? 'answerer' : 'guesser',
+                  nameOf(round.answerer_id)
+                )}
+              </h1>
               <p className="text-sm font-bold text-ink-soft">
                 {stage === 'answering' && iAnswer && 'Answer honestly - they have to guess this.'}
-                {stage === 'guessing' && iGuess && `What did ${nameOf(round.answerer_id)} pick?`}
+                {stage === 'guessing' && iGuess && 'Pick what you think they said.'}
                 {stage === 'revealed' && 'Reveal'}
               </p>
             </div>

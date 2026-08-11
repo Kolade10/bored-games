@@ -64,6 +64,13 @@ each file (not the filename) and hit Run:
    be played. Also idempotent.
 7. **`database_migration_7.sql`** - adds Guess Me. Required before that game can
    be played. Also idempotent.
+8. **`database_migration_8.sql`** - adds Who's More Likely?. Required before
+   that game can be played. Also idempotent.
+
+Migration 8 keeps each player's pick out of the browser until both are in -
+clients can see *that* someone has locked in, never what they chose - and
+resolves agreement, the shared streak and the double-points final round
+server-side.
 
 Migration 7 hides the answerer's answer from the guesser the same way, and
 scores server-side. The streak multiplier is counted inside the function from
