@@ -11,6 +11,7 @@ share the six-character code, and play in real time.
 - **Trivia**: Ten general knowledge questions from [OpenTDB](https://opentdb.com), solo or against friends
 - **Guess Me**: A couples game - one answers about themselves, the other predicts
 - **Who's More Likely?**: Both secretly pick which of you is more likely, then compare
+- **Charades**: One phone passed around teams - act it out, tilt down for correct, up to pass
 - **Room System**: Create and join game rooms with unique codes
 - **Real-time Multiplayer**: Live game updates using Supabase realtime
 - **Spectator Mode**: Watch when a room is already full
@@ -101,6 +102,23 @@ Scoring per answer:
 | 5 | Unique answer that could not be verified (proper nouns, dictionary offline) |
 | 3 | Unverified answer another player also gave |
 | 0 | Wrong starting letter, not a real word, or wrong category |
+
+### Charades
+- Played on **one device**, passed between teams - no room code and no database
+- Solo team, or 2-4 teams with custom names; 1, 3, 5 or 10 rounds
+- 60 seconds a turn. Tilt the phone **down** for correct, **up** to pass
+- Tap zones at the bottom do the same, for devices with no motion sensor
+- 481 prompts across nine categories; Nigerian is the largest at 111
+- No word repeats within a game, and recent games are avoided too
+
+Landscape is the intended orientation and the game says so if the phone is
+upright. The tilt reading comes from `beta` or `gamma` depending on screen
+orientation, calibrated to however the actor is holding the phone when the turn
+starts. If the gestures feel reversed there is a **flip** toggle on the ready
+screen.
+
+Word bank lives in [src/lib/charades](src/lib/charades). Run
+`node test-charades.mjs` after editing it.
 
 ### Who's More Likely?
 - Two players; a scenario appears and you both privately pick one of you

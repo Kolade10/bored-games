@@ -74,6 +74,17 @@ const GAMES = [
     available: true
   },
   {
+    id: 'charades',
+    title: 'Charades',
+    description: 'One phone, passed around. Act it out while your team shouts - tilt down when they get it, up to skip.',
+    players: '2-16 players',
+    difficulty: 'Easy',
+    estimatedTime: '10-20 min',
+    accent: 'coral',
+    Icon: Users,
+    available: true
+  },
+  {
     id: 'word-chain',
     title: 'Word Chain',
     description: 'Each word has to start with the last letter of the one before it. Break the chain, lose the round.',
@@ -145,8 +156,8 @@ export default function Home() {
             Pick a game.<br />Grab a friend.
           </h1>
           <p className="text-lg text-ink-soft mb-6">
-            Share a six-character room code and play together in real time.
-            No accounts, no downloads, no nonsense.
+            Share a room code and play together in real time, or pass one phone
+            around the room. No accounts, no downloads, no nonsense.
           </p>
           <div className="flex flex-wrap gap-2">
             <span className="chip chip-leaf">
