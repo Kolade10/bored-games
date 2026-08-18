@@ -4,15 +4,16 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ArrowRight, Brain, Check, Clapperboard, Heart, House, Laugh, MapPin,
-  Play, RotateCcw, Shapes, SkipForward, Smartphone, Trophy, Users, Utensils
+  Play, RotateCcw, Shapes, SkipForward, Trophy, Users, Utensils
 } from 'lucide-react';
 import {
-  CATEGORIES, DIFFICULTIES, ROUND_OPTIONS, TURN_SECONDS, MAX_TEAMS,
+  CATEGORIES, DIFFICULTIES, ROUND_OPTIONS, TURN_SECONDS,
   buildDeck, TURN_DECK_SIZE
 } from '@/lib/charades/index.js';
 import {
   useTilt, requestTiltPermission, TILT_SUPPORTED, TILT_NEEDS_PERMISSION
 } from '@/lib/charades/useTilt.js';
+import { enterLandscape, exitLandscape, rotatedStageStyle } from '@/lib/charades/landscape.js';
 
 const CATEGORY_ICONS = {
   Shapes, Clapperboard, Trophy, Utensils, House, Laugh, Heart, Brain, MapPin
@@ -86,16 +87,23 @@ export default function CharadesGame() {
     [teams, scores]
   );
 
-  // Landscape is the intended way to hold this, but the game should not be a
-  // dead end if the phone is upright.
+  // matchMedia is the dependable signal here - a plain resize listener does not
+  // always fire when the viewport changes shape, which left the game rendering
+  // upright on a portrait phone.
   useEffect(() => {
-    const check = () => setPortrait(window.innerHeight > window.innerWidth);
+    const query = window.matchMedia('(orientation: portrait)');
+    const check = () => setPortrait(query.matches || window.innerHeight > window.innerWidth);
     check();
+    query.addEventListener?.('change', check);
     window.addEventListener('resize', check);
     window.addEventListener('orientationchange', check);
+    // Belt and braces: the phone can settle a moment after the event fires.
+    const poll = setInterval(check, 500);
     return () => {
+      query.removeEventListener?.('change', check);
       window.removeEventListener('resize', check);
       window.removeEventListener('orientationchange', check);
+      clearInterval(poll);
     };
   }, []);
 
@@ -138,7 +146,7 @@ export default function CharadesGame() {
     nextWord(false);
   }, [phase, nextWord]);
 
-  const { reading } = useTilt({
+  useTilt({
     active: phase === 'playing',
     inverted,
     onDown: handleCorrect,
@@ -167,6 +175,12 @@ export default function CharadesGame() {
       if (left <= 0) setPhase('turnEnd');
     }, 200);
     return () => clearInterval(tick);
+  }, [phase]);
+
+  // Hand the phone back in its normal orientation between turns.
+  useEffect(() => {
+    if (phase === 'countdown' || phase === 'playing') return;
+    exitLandscape();
   }, [phase]);
 
   // Bank the turn once time is up.
@@ -201,9 +215,12 @@ export default function CharadesGame() {
   };
 
   const beginTurn = async () => {
+    // Both of these have to happen inside the tap: fullscreen and the motion
+    // permission prompt are only granted from a user gesture.
     if (TILT_NEEDS_PERMISSION && !tiltReady) {
       setTiltReady(await requestTiltPermission());
     }
+    await enterLandscape();
     setTurnWords(deck.slice(0, TURN_DECK_SIZE));
     setWordIndex(0);
     setTurnResults([]);
@@ -283,67 +300,75 @@ export default function CharadesGame() {
   /* Gameplay is its own full-bleed screen - no chrome competing with the word */
   if (phase === 'countdown' || phase === 'playing') {
     const urgent = secondsLeft <= 10;
-    return (
+    // Rotate whenever the viewport is actually upright. Asking the lock whether
+    // it worked is not enough - it can resolve without the screen turning, and
+    // then the game would render portrait anyway. What the viewport is doing is
+    // the only thing that matters.
+    const rotate = portrait;
+
+    const stage = (
       <div
-        className={`fixed inset-0 flex flex-col select-none touch-none
+        className={`w-full h-full flex flex-col select-none touch-none overflow-hidden
                     ${flash === 'correct' ? 'bg-leaf' : flash === 'pass' ? 'bg-amber' : 'bg-paper'}`}
       >
-        {portrait && (
-          <div className="absolute top-0 inset-x-0 z-10 bg-ink text-paper text-center py-2 text-sm font-bold flex items-center justify-center gap-2">
-            <Smartphone className="w-4 h-4" strokeWidth={2.5} />
-            Turn your phone sideways
-          </div>
-        )}
-
-        <div className="flex items-center justify-between px-4 pt-3 text-sm font-extrabold">
-          <span className="truncate">{activeTeam.name}</span>
-          <span>{scores[activeTeam.index]}</span>
+        {/* Fixed rows top and bottom, one flexible row in the middle: the word
+            can shrink but the timer and the buttons can never be pushed off. */}
+        <div className="shrink-0 flex items-center justify-between px-[3vmin] pt-[2vmin]
+                        text-[2.6vmin] font-extrabold">
+          <span className="truncate max-w-[60%]">{activeTeam.name}</span>
+          <span className="tabular-nums">{scores[activeTeam.index]}</span>
         </div>
 
         {phase === 'countdown' ? (
-          <div className="grow flex items-center justify-center">
-            <p className="text-[22vw] leading-none font-extrabold">
+          <div className="grow min-h-0 flex items-center justify-center">
+            <p className="text-[26vmin] leading-none font-extrabold">
               {countdown > 0 ? countdown : 'GO'}
             </p>
           </div>
         ) : (
           <>
-            <div className="grow flex items-center justify-center px-6 text-center">
-              <p className="text-[clamp(2rem,9vw,5rem)] leading-tight font-extrabold break-words">
+            <div className="grow min-h-0 flex items-center justify-center px-[5vmin] text-center overflow-hidden">
+              <p className="text-[clamp(1.5rem,9vmin,4.5rem)] leading-[1.1] font-extrabold break-words">
                 {flash === 'correct' ? 'CORRECT'
                   : flash === 'pass' ? 'PASS'
                   : word?.text || 'Out of words'}
               </p>
             </div>
 
-            <p className={`text-center font-extrabold tabular-nums
-                           ${urgent ? 'text-coral text-[14vw]' : 'text-[9vw]'}`}>
+            <p className={`shrink-0 text-center font-extrabold tabular-nums leading-none pb-[1vmin]
+                           ${urgent ? 'text-coral text-[11vmin]' : 'text-[8vmin]'}`}>
               {String(Math.floor(secondsLeft / 60)).padStart(2, '0')}:
               {String(secondsLeft % 60).padStart(2, '0')}
             </p>
 
             {/* Tap zones stand in for tilting when the sensor is unavailable,
                 and give anyone a way to play if a gesture is missed. */}
-            <div className="flex border-t-2 border-line">
+            <div className="shrink-0 flex border-t-2 border-line">
               <button
                 onClick={handlePass}
-                className="grow py-5 font-extrabold flex items-center justify-center gap-2 border-r-2 border-line"
+                className="grow py-[2.4vmin] text-[2.8vmin] font-extrabold flex items-center
+                           justify-center gap-2 border-r-2 border-line"
               >
-                <SkipForward className="w-5 h-5" strokeWidth={3} />
-                Tilt up / tap to pass
+                <SkipForward className="w-[3.4vmin] h-[3.4vmin]" strokeWidth={3} />
+                Tilt up / pass
               </button>
               <button
                 onClick={handleCorrect}
-                className="grow py-5 font-extrabold flex items-center justify-center gap-2 bg-leaf text-[var(--on-leaf)]"
+                className="grow py-[2.4vmin] text-[2.8vmin] font-extrabold flex items-center
+                           justify-center gap-2 bg-leaf text-[var(--on-leaf)]"
               >
-                <Check className="w-5 h-5" strokeWidth={3} />
-                Tilt down / tap for correct
+                <Check className="w-[3.4vmin] h-[3.4vmin]" strokeWidth={3} />
+                Tilt down / correct
               </button>
             </div>
           </>
         )}
       </div>
     );
+
+    return rotate
+      ? <div style={rotatedStageStyle}>{stage}</div>
+      : <div className="fixed inset-0">{stage}</div>;
   }
 
   if (phase === 'mode') {
