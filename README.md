@@ -111,10 +111,20 @@ Scoring per answer:
 - 481 prompts across nine categories; Nigerian is the largest at 111
 - No word repeats within a game, and recent games are avoided too
 
-Landscape is the intended orientation and the game says so if the phone is
-upright. The tilt reading comes from `beta` or `gamma` depending on screen
-orientation, calibrated to however the actor is holding the phone when the turn
-starts. If the gestures feel reversed there is a **flip** toggle on the ready
+When a turn starts the game goes fullscreen and asks for a landscape lock.
+Where the browser refuses (iOS Safari has no orientation lock), the stage is
+rotated 90 degrees with CSS instead, so it still plays sideways on an upright
+phone. Orientation is detected with `matchMedia`, which is dependable where a
+plain resize listener is not.
+
+The tilt signal is gravity along the axis pointing out of the screen, read from
+`devicemotion`. Held up with the screen facing the guessers that axis reads
+about zero; tip the screen towards the floor and it swings to -9.8, towards the
+ceiling +9.8. One number covers the whole gesture and it does not care which
+way the phone was turned to get into landscape - unlike `beta` and `gamma`,
+which need different maths per orientation and go unstable exactly where this
+game holds the phone. The resting angle is calibrated at the start of each
+turn. If the gestures feel reversed there is a **flip** toggle on the ready
 screen.
 
 Word bank lives in [src/lib/charades](src/lib/charades). Run

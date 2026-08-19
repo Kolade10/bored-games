@@ -2,25 +2,30 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-// Gravity along the axis pointing out of the screen, in m/s².
+// Reading a tilt from a phone is not something to guess at from first
+// principles: which axis moves, and in which direction, depends on how the
+// person is holding it, which way they turned it into landscape, and where
+// their resting angle sits. Assuming a single axis got one gesture working and
+// left the other almost impossible to trigger.
 //
-// Holding the phone up with the screen facing the guessers, that axis is
-// horizontal and reads about 0. Tip the screen towards the floor and it goes to
-// about -9.8; tip it towards the ceiling and it goes to +9.8. So one number
-// describes the whole gesture, and it does not care whether the phone was
-// turned to the left or the right to get into landscape.
-//
-// This replaced a beta/gamma reading, which needed different maths per screen
-// orientation and went unstable exactly where this game holds the phone -
-// upright, where those two angles start to fight each other.
-const TRIGGER = 5.6;   // roughly 35 degrees off the resting angle
-const RESET = 2.6;     // must come back to about 15 degrees before firing again
-const LOCKOUT_MS = 650;
+// So this does not assume anything. The actor performs the "correct" gesture
+// once, and the difference between resting and tilted gravity becomes the
+// direction that means correct. Everything after that is a projection of the
+// live reading onto that learned direction: positive is the gesture they
+// taught it, negative is the opposite one. Whatever axis it really lives on,
+// and whichever way round, it works out the same.
+
+const TRIGGER = 4.2;        // m/s² along the learned direction, about 25 degrees
+const REARM = 1.8;
+const DRIFT = 0.02;
+const LOCKOUT_MS = 600;
 const SMOOTHING = 0.35;
 
-const hasMotion = () => typeof window !== 'undefined' && 'DeviceMotionEvent' in window;
+// Used until the actor calibrates: screen tipping towards the floor.
+export const DEFAULT_DOWN_AXIS = { x: 0, y: 0, z: -1 };
 
-export const TILT_SUPPORTED = hasMotion();
+export const TILT_SUPPORTED =
+  typeof window !== 'undefined' && 'DeviceMotionEvent' in window;
 
 export const TILT_NEEDS_PERMISSION =
   TILT_SUPPORTED && typeof DeviceMotionEvent.requestPermission === 'function';
@@ -34,30 +39,46 @@ export async function requestTiltPermission() {
   }
 }
 
+const sub = (a, b) => ({ x: a.x - b.x, y: a.y - b.y, z: a.z - b.z });
+const dot = (a, b) => a.x * b.x + a.y * b.y + a.z * b.z;
+const length = (v) => Math.sqrt(dot(v, v)) || 1;
+
+/** Turns a raw difference between two holds into a usable direction. */
+export function normaliseAxis(vector) {
+  const len = length(vector);
+  return { x: vector.x / len, y: vector.y / len, z: vector.z / len };
+}
+
 /**
- * Phone as controller: tip the screen down for correct, up to pass.
+ * Phone as controller, using a direction the actor taught it.
  *
  * @param {object} options
- * @param {boolean} options.active only listen during a live turn
- * @param {boolean} options.inverted swap the two gestures
+ * @param {boolean} options.active
+ * @param {{x:number,y:number,z:number}} [options.downAxis] learned "correct" direction
  * @param {() => void} options.onDown
  * @param {() => void} options.onUp
  */
-export function useTilt({ active, inverted = false, onDown, onUp }) {
+export function useTilt({ active, downAxis, onDown, onUp }) {
   const [reading, setReading] = useState(0);
   const [live, setLive] = useState(false);
+  const [gravity, setGravity] = useState(null);
 
-  const neutralRef = useRef(null);
   const smoothRef = useRef(null);
+  const restRef = useRef(null);
   const armedRef = useRef(true);
   const lockedUntilRef = useRef(0);
   const handlers = useRef({ onDown, onUp });
   handlers.current = { onDown, onUp };
 
+  const axis = downAxis || DEFAULT_DOWN_AXIS;
+  const axisRef = useRef(axis);
+  axisRef.current = axis;
+
   const recalibrate = useCallback(() => {
-    neutralRef.current = null;
+    restRef.current = null;
     smoothRef.current = null;
     armedRef.current = true;
+    setReading(0);
   }, []);
 
   useEffect(() => {
@@ -65,50 +86,66 @@ export function useTilt({ active, inverted = false, onDown, onUp }) {
 
     const onMotion = (event) => {
       const g = event.accelerationIncludingGravity;
-      if (!g || g.z === null || g.z === undefined) return;
+      if (!g || g.x === null || g.y === null || g.z === null) return;
 
       setLive(true);
 
-      // Light smoothing so a shake of the hand cannot trip a gesture.
+      const raw = { x: g.x, y: g.y, z: g.z };
       smoothRef.current = smoothRef.current === null
-        ? g.z
-        : smoothRef.current + (g.z - smoothRef.current) * SMOOTHING;
+        ? raw
+        : {
+            x: smoothRef.current.x + (raw.x - smoothRef.current.x) * SMOOTHING,
+            y: smoothRef.current.y + (raw.y - smoothRef.current.y) * SMOOTHING,
+            z: smoothRef.current.z + (raw.z - smoothRef.current.z) * SMOOTHING
+          };
       const value = smoothRef.current;
+      setGravity(value);
 
-      // Whatever angle the actor is holding it at when the turn starts is
-      // treated as the resting position.
-      if (neutralRef.current === null) neutralRef.current = value;
-      const delta = value - neutralRef.current;
+      // However they are holding it right now is the resting position.
+      if (restRef.current === null) restRef.current = { ...value };
+
+      // Positive means they moved it the way they said meant "correct".
+      const delta = dot(sub(value, restRef.current), axisRef.current);
       setReading(delta);
+
+      // Let the resting point follow their posture, but only while at rest, so
+      // the gesture itself never drags the baseline along with it.
+      if (Math.abs(delta) < REARM) {
+        const rest = restRef.current;
+        restRef.current = {
+          x: rest.x + (value.x - rest.x) * DRIFT,
+          y: rest.y + (value.y - rest.y) * DRIFT,
+          z: rest.z + (value.z - rest.z) * DRIFT
+        };
+      }
 
       const now = Date.now();
       if (now < lockedUntilRef.current) return;
 
       if (!armedRef.current) {
-        if (Math.abs(delta) < RESET) armedRef.current = true;
+        if (Math.abs(delta) < REARM) armedRef.current = true;
         return;
       }
       if (Math.abs(delta) < TRIGGER) return;
 
-      // Screen tipped towards the floor is the "correct" gesture.
-      const isDown = inverted ? delta > 0 : delta < 0;
       armedRef.current = false;
       lockedUntilRef.current = now + LOCKOUT_MS;
 
-      if (isDown) handlers.current.onDown?.();
+      if (delta > 0) handlers.current.onDown?.();
       else handlers.current.onUp?.();
     };
 
     window.addEventListener('devicemotion', onMotion);
     return () => window.removeEventListener('devicemotion', onMotion);
-  }, [active, inverted]);
+  }, [active]);
 
   useEffect(() => {
     if (!active) {
       recalibrate();
       setLive(false);
+      setGravity(null);
     }
   }, [active, recalibrate]);
 
-  return { reading, recalibrate, live };
+  return { reading, live, gravity, recalibrate, trigger: TRIGGER };
 }

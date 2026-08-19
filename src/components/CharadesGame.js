@@ -11,7 +11,8 @@ import {
   buildDeck, TURN_DECK_SIZE
 } from '@/lib/charades/index.js';
 import {
-  useTilt, requestTiltPermission, TILT_SUPPORTED, TILT_NEEDS_PERMISSION
+  useTilt, requestTiltPermission, normaliseAxis,
+  TILT_SUPPORTED, TILT_NEEDS_PERMISSION
 } from '@/lib/charades/useTilt.js';
 import { enterLandscape, exitLandscape, rotatedStageStyle } from '@/lib/charades/landscape.js';
 
@@ -27,6 +28,17 @@ const CategoryIcon = ({ category, className }) => {
 const DEFAULT_NAMES = ['Team 1', 'Team 2', 'Team 3', 'Team 4'];
 const RECENT_KEY = 'boredgame:charades:recent';
 const BEST_KEY = 'boredgame:charades:best';
+const AXIS_KEY = 'boredgame:charades:tiltaxis';
+
+const readAxis = () => {
+  if (typeof window === 'undefined') return null;
+  try {
+    const saved = JSON.parse(localStorage.getItem(AXIS_KEY) || 'null');
+    return saved && typeof saved.x === 'number' ? saved : null;
+  } catch {
+    return null;
+  }
+};
 
 const readRecent = () => {
   if (typeof window === 'undefined') return [];
@@ -61,7 +73,9 @@ export default function CharadesGame() {
   const [countdown, setCountdown] = useState(3);
 
   const [tiltReady, setTiltReady] = useState(!TILT_NEEDS_PERMISSION && TILT_SUPPORTED);
-  const [inverted, setInverted] = useState(false);
+  const [downAxis, setDownAxis] = useState(null);
+  // idle -> resting -> tilting -> done
+  const [calibration, setCalibration] = useState('idle');
   const [portrait, setPortrait] = useState(false);
 
   const deadlineRef = useRef(0);
@@ -146,16 +160,25 @@ export default function CharadesGame() {
     nextWord(false);
   }, [phase, nextWord]);
 
-  useTilt({
-    active: phase === 'playing',
-    inverted,
+  // Also listen on the ready screen, so the actor can check both gestures
+  // before the clock starts. handleCorrect/handlePass ignore anything that is
+  // not the playing phase, so nothing is scored during the check.
+  const { reading, live, gravity, recalibrate } = useTilt({
+    active: phase === 'playing' || phase === 'ready',
+    downAxis,
     onDown: handleCorrect,
     onUp: handlePass
   });
 
+  useEffect(() => { setDownAxis(readAxis()); }, []);
+
+  const gravityRef = useRef(null);
+  gravityRef.current = gravity;
+
   // Countdown into the turn.
   useEffect(() => {
     if (phase !== 'countdown') return;
+    if (countdown === 3) recalibrate();
     if (countdown <= 0) {
       deadlineRef.current = Date.now() + TURN_SECONDS * 1000;
       setSecondsLeft(TURN_SECONDS);
@@ -164,7 +187,7 @@ export default function CharadesGame() {
     }
     const timer = setTimeout(() => setCountdown(c => c - 1), 800);
     return () => clearTimeout(timer);
-  }, [phase, countdown]);
+  }, [phase, countdown, recalibrate]);
 
   // Turn clock.
   useEffect(() => {
@@ -204,6 +227,51 @@ export default function CharadesGame() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
+
+  // Records what the "correct" gesture actually looks like on this phone:
+  // hold it still, then tilt it once. The difference between the two holds is
+  // the direction, whichever axis it turns out to live on.
+  const calibrateTilt = async () => {
+    if (!TILT_SUPPORTED || calibration !== 'idle') return;
+    if (TILT_NEEDS_PERMISSION && !tiltReady) {
+      const granted = await requestTiltPermission();
+      setTiltReady(granted);
+      if (!granted) return;
+    }
+
+    const wait = (ms) => new Promise(r => setTimeout(r, ms));
+
+    setCalibration('resting');
+    await wait(1400);
+    const rest = gravityRef.current;
+    if (!rest) { setCalibration('idle'); return; }
+
+    setCalibration('tilting');
+    let peak = { x: 0, y: 0, z: 0 };
+    let peakSize = 0;
+    const until = Date.now() + 2600;
+    while (Date.now() < until) {
+      await wait(60);
+      const now = gravityRef.current;
+      if (!now) continue;
+      const delta = { x: now.x - rest.x, y: now.y - rest.y, z: now.z - rest.z };
+      const size = Math.sqrt(delta.x ** 2 + delta.y ** 2 + delta.z ** 2);
+      if (size > peakSize) { peakSize = size; peak = delta; }
+    }
+
+    // Too small to be a deliberate gesture - keep whatever was there before.
+    if (peakSize < 3) {
+      setCalibration('idle');
+      return;
+    }
+
+    const axis = normaliseAxis(peak);
+    setDownAxis(axis);
+    localStorage.setItem(AXIS_KEY, JSON.stringify(axis));
+    setCalibration('done');
+    recalibrate();
+    setTimeout(() => setCalibration('idle'), 2200);
+  };
 
   const startGame = () => {
     const fresh = buildDeck({ categories, difficulty, excludeIds: readRecent() });
@@ -535,6 +603,11 @@ export default function CharadesGame() {
   }
 
   if (phase === 'ready') {
+    // Mirrors the hook's own test, so the indicator cannot disagree with it.
+    const past = Math.abs(reading) >= 4.2;
+    const down = past && reading > 0;
+    const up = past && reading < 0;
+
     return (
       <Shell>
         <div className="card p-8 text-center mb-4">
@@ -547,13 +620,73 @@ export default function CharadesGame() {
             <Play className="w-5 h-5" strokeWidth={3} />
             We&apos;re ready
           </button>
+
+          {/* Calibrate once, then check it. The bar is the live reading and
+              the shaded ends are where a gesture fires. */}
           {TILT_SUPPORTED && (
-            <button
-              onClick={() => setInverted(v => !v)}
-              className="mt-3 text-sm font-bold text-ink-soft underline"
-            >
-              {inverted ? 'Tilt controls are flipped' : 'Tilt feels backwards? Flip it'}
-            </button>
+            <div className="mt-5 text-left">
+              {calibration === 'idle' && (
+                <>
+                  <p className="text-xs font-extrabold text-ink-soft mb-2">
+                    {downAxis
+                      ? live
+                        ? 'Tilt check - try both ways'
+                        : 'Move the phone to wake the sensor'
+                      : 'Teach it your tilt first, then it works every time'}
+                  </p>
+
+                  {downAxis && (
+                    <>
+                      <div className="relative h-9 panel overflow-hidden">
+                        <div className="absolute inset-y-0 right-0 w-[28%] bg-leaf-soft" />
+                        <div className="absolute inset-y-0 left-0 w-[28%] bg-amber-soft" />
+                        <div
+                          className="absolute top-1 bottom-1 w-1.5 rounded-full bg-ink"
+                          style={{ left: `calc(${Math.min(97, Math.max(1, 50 + (reading / 9.8) * 50))}% - 3px)` }}
+                        />
+                      </div>
+                      <div className="flex justify-between mt-1.5 text-[0.7rem] font-extrabold">
+                        <span className={up ? 'text-amber' : 'text-ink-soft'}>pass</span>
+                        <span className={down ? 'text-leaf' : 'text-ink-soft'}>correct</span>
+                      </div>
+                      <p className="mt-2 text-sm font-extrabold h-5">
+                        {down ? 'Correct would fire' : up ? 'Pass would fire' : ''}
+                      </p>
+                    </>
+                  )}
+
+                  <button
+                    onClick={calibrateTilt}
+                    className={`mt-2 ${downAxis ? 'text-sm font-bold text-ink-soft underline' : 'btn btn-quiet btn-sm w-full'}`}
+                  >
+                    {downAxis ? 'Set the tilt up again' : 'Set up tilt controls'}
+                  </button>
+                </>
+              )}
+
+              {calibration === 'resting' && (
+                <div className="panel p-4 text-center">
+                  <p className="font-extrabold">Hold the phone how you will play</p>
+                  <p className="text-sm text-ink-soft font-semibold">Keep it still...</p>
+                </div>
+              )}
+
+              {calibration === 'tilting' && (
+                <div className="panel p-4 text-center bg-leaf-soft">
+                  <p className="font-extrabold">Now tilt it the way that means CORRECT</p>
+                  <p className="text-sm text-ink-soft font-semibold">And hold it there</p>
+                </div>
+              )}
+
+              {calibration === 'done' && (
+                <div className="panel p-4 text-center bg-leaf-soft">
+                  <p className="font-extrabold">Got it</p>
+                  <p className="text-sm text-ink-soft font-semibold">
+                    That tilt is correct, the opposite is pass
+                  </p>
+                </div>
+              )}
+            </div>
           )}
         </div>
 
