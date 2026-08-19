@@ -7,9 +7,12 @@ import {
   Play, RotateCcw, Shapes, SkipForward, Trophy, Users, Utensils
 } from 'lucide-react';
 import {
-  CATEGORIES, DIFFICULTIES, ROUND_OPTIONS, TURN_SECONDS,
-  buildDeck, TURN_DECK_SIZE
+  CATEGORIES, DIFFICULTIES, ROUND_OPTIONS, TURN_SECONDS, MAX_TEAMS,
+  WORDS, buildDeck, TURN_DECK_SIZE
 } from '@/lib/charades/index.js';
+import {
+  createGame, saveGame, loadActiveGame, clearActiveGame
+} from '@/lib/charades/storage.js';
 import {
   useTilt, requestTiltPermission, normaliseAxis,
   TILT_SUPPORTED, TILT_NEEDS_PERMISSION
@@ -77,6 +80,9 @@ export default function CharadesGame() {
   // idle -> resting -> tilting -> done
   const [calibration, setCalibration] = useState('idle');
   const [portrait, setPortrait] = useState(false);
+  const [gameId, setGameId] = useState(null);
+  const [resumable, setResumable] = useState(null);
+  const [saving, setSaving] = useState(false);
 
   const deadlineRef = useRef(0);
   const wakeLockRef = useRef(null);
@@ -273,13 +279,94 @@ export default function CharadesGame() {
     setTimeout(() => setCalibration('idle'), 2200);
   };
 
-  const startGame = () => {
+  // Everything needed to pick the game back up. Deliberately excludes the live
+  // turn - a refresh mid-turn resumes at the start of that team's turn rather
+  // than halfway through a 60 second clock nobody can reconstruct.
+  const snapshot = useCallback((over) => ({
+    savedAt: Date.now(),
+    finished: over,
+    teamCount, names, categories, difficulty, rounds,
+    scores, history, turnIndex,
+    deckIds: deck.map(w => w.id)
+  }), [teamCount, names, categories, difficulty, rounds, scores, history, turnIndex, deck]);
+
+  const persist = useCallback(async (over = false) => {
+    setSaving(true);
+    await saveGame(gameId, snapshot(over), { finished: over });
+    setSaving(false);
+    if (over) setGameId(null);
+  }, [gameId, snapshot]);
+
+  // Offer to pick up an unfinished game.
+  useEffect(() => {
+    let cancelled = false;
+    loadActiveGame().then(found => {
+      if (!cancelled && found?.state) setResumable(found);
+    });
+    return () => { cancelled = true; };
+  }, []);
+
+  const resumeGame = () => {
+    const { id, state } = resumable;
+    // A saved game is external input: it may be from an older build, a partial
+    // write, or hand-edited storage. Coerce everything into shape rather than
+    // letting one odd field take the whole screen down.
+    const arr = (v, len, fill) => {
+      const out = Array.isArray(v) ? v.slice(0, len) : [];
+      while (out.length < len) out.push(fill);
+      return out;
+    };
+    const count = Math.min(MAX_TEAMS, Math.max(1, Number(state.teamCount) || 1));
+
+    setTeamCount(count);
+    setNames(arr(state.names, 4, ''));
+    setCategories(Array.isArray(state.categories) ? state.categories : []);
+    setDifficulty(['easy', 'medium', 'hard', 'mixed'].includes(state.difficulty) ? state.difficulty : 'mixed');
+    setRounds(ROUND_OPTIONS.includes(Number(state.rounds)) ? Number(state.rounds) : 3);
+    setScores(arr(state.scores, 4, 0).map(n => Number(n) || 0));
+    setHistory(
+      (Array.isArray(state.history) ? state.history : []).map(h => ({
+        team: Number(h?.team) || 0,
+        got: Number(h?.got) || 0,
+        passed: Number(h?.passed) || 0,
+        words: Array.isArray(h?.words) ? h.words : []
+      }))
+    );
+    setTurnIndex(Math.max(0, Number(state.turnIndex) || 0));
+
+    // Rebuild the deck from ids so the saved order survives, dropping anything
+    // that no longer exists in the word bank.
+    const byId = new Map(WORDS.map(w => [w.id, w]));
+    const restored = (state.deckIds ?? []).map(wid => byId.get(wid)).filter(Boolean);
+    setDeck(restored.length ? restored : buildDeck({ categories: state.categories, difficulty: state.difficulty }));
+
+    setGameId(id);
+    setResumable(null);
+    setPhase('ready');
+  };
+
+  const discardResume = async () => {
+    clearActiveGame();
+    setResumable(null);
+  };
+
+  const startGame = async () => {
     const fresh = buildDeck({ categories, difficulty, excludeIds: readRecent() });
     setDeck(fresh);
     setScores([0, 0, 0, 0]);
     setHistory([]);
     setTurnIndex(0);
     setPhase('ready');
+
+    setSaving(true);
+    const id = await createGame({
+      savedAt: Date.now(), finished: false,
+      teamCount, names, categories, difficulty, rounds,
+      scores: [0, 0, 0, 0], history: [], turnIndex: 0,
+      deckIds: fresh.map(w => w.id)
+    });
+    setGameId(id);
+    setSaving(false);
   };
 
   const beginTurn = async () => {
@@ -300,6 +387,7 @@ export default function CharadesGame() {
     const next = turnIndex + 1;
     if (next >= totalTurns) {
       setPhase('final');
+      persist(true);
       if (teams.length === 1 && typeof window !== 'undefined') {
         const best = Number(localStorage.getItem(BEST_KEY) || 0);
         if (scores[0] > best) localStorage.setItem(BEST_KEY, String(scores[0]));
@@ -310,7 +398,16 @@ export default function CharadesGame() {
     setPhase('ready');
   };
 
+  // Scores and history land in state at the end of a turn, so save once the
+  // turn result screen is showing rather than trying to save mid-render.
+  useEffect(() => {
+    if (phase === 'turnEnd' && gameId) persist(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [phase, turnIndex, gameId]);
+
   const playAgain = () => {
+    clearActiveGame();
+    setGameId(null);
     setPhase('mode');
     setScores([0, 0, 0, 0]);
     setHistory([]);
@@ -318,17 +415,19 @@ export default function CharadesGame() {
   };
 
   const stats = useMemo(() => {
+    // History can come back from a saved game, so treat every field as
+    // optional rather than trusting the shape.
     const totals = history.reduce((acc, h) => {
-      acc.got += h.got;
-      acc.passed += h.passed;
+      acc.got += h?.got || 0;
+      acc.passed += h?.passed || 0;
       return acc;
     }, { got: 0, passed: 0 });
-    const best = history.reduce((max, h) => Math.max(max, h.got), 0);
+    const best = history.reduce((max, h) => Math.max(max, h?.got || 0), 0);
     let longest = 0;
     history.forEach(h => {
       let run = 0;
-      h.words.forEach(w => {
-        run = w.got ? run + 1 : 0;
+      (h?.words || []).forEach(w => {
+        run = w?.got ? run + 1 : 0;
         longest = Math.max(longest, run);
       });
     });
@@ -472,6 +571,34 @@ export default function CharadesGame() {
             </p>
           )}
         </div>
+
+        {resumable && (
+          <div className="card p-6 mb-4 bg-amber-soft">
+            <h2 className="text-lg mb-1">You have a game in progress</h2>
+            <p className="text-sm text-ink-soft mb-4">
+              {(() => {
+                const st = resumable.state;
+                const teamCountSaved = st.teamCount ?? 1;
+                const played = st.turnIndex ?? 0;
+                const total = teamCountSaved * (st.rounds ?? 1);
+                const leader = (st.names || [])
+                  .slice(0, teamCountSaved)
+                  .map((n, i) => ({ name: n || `Team ${i + 1}`, score: (st.scores || [])[i] || 0 }))
+                  .sort((a, b) => b.score - a.score)[0];
+                return `Turn ${played + 1} of ${total}${leader ? ` - ${leader.name} leading on ${leader.score}` : ''}`;
+              })()}
+            </p>
+            <div className="flex flex-col sm:flex-row gap-3">
+              <button onClick={resumeGame} className="btn btn-coral btn-lg grow">
+                <Play className="w-5 h-5" strokeWidth={3} />
+                Carry on
+              </button>
+              <button onClick={discardResume} className="btn btn-quiet shrink-0">
+                Start fresh
+              </button>
+            </div>
+          </div>
+        )}
 
         <div className="card p-6 mb-4">
           <h2 className="text-lg mb-1">Team names</h2>

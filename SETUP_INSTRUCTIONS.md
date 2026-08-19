@@ -66,6 +66,14 @@ each file (not the filename) and hit Run:
    be played. Also idempotent.
 8. **`database_migration_8.sql`** - adds Who's More Likely?. Required before
    that game can be played. Also idempotent.
+9. **`database_migration_9.sql`** - saves charades games so a refresh does not
+   lose the scores. Optional: without it charades falls back to storing the
+   game in the browser only.
+
+Charades is the one game with no room and no second device, so migration 9 is
+just one row per game holding the whole state as JSON. The browser keeps its
+own copy too, written first, so a bad connection in the middle of a party never
+stalls the game or loses a score.
 
 Migration 8 keeps each player's pick out of the browser until both are in -
 clients can see *that* someone has locked in, never what they chose - and
