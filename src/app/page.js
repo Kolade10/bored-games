@@ -1,7 +1,7 @@
 import Link from "next/link";
 import {
-  ArrowRight, BrainCircuit, Clock, Gauge, Grid3x3, Heart, Laugh, Link2,
-  Paintbrush, PencilLine, Swords, Users
+  ArrowRight, BrainCircuit, Clock, Eye, Gauge, Grid3x3, Heart, Laugh, Link2,
+  KeyRound, Paintbrush, PencilLine, Swords, Users
 } from "lucide-react";
 import SiteHeader from "@/components/SiteHeader";
 import YourRooms from "@/components/YourRooms";
@@ -82,6 +82,28 @@ const GAMES = [
     estimatedTime: '10-20 min',
     accent: 'coral',
     Icon: Users,
+    available: true
+  },
+  {
+    id: 'undercover',
+    title: 'Undercover',
+    description: 'Everyone gets the same secret word. One of you gets a different one. Give clues, spot the impostor, vote them out.',
+    players: '4-10 players',
+    difficulty: 'Medium',
+    estimatedTime: '10-25 min',
+    accent: 'coral',
+    Icon: Eye,
+    available: true
+  },
+  {
+    id: 'password',
+    title: 'Password',
+    description: 'Describe the secret word to your team - but the four most obvious clues are banned. Answer fast for more points.',
+    players: '4-16 players',
+    difficulty: 'Medium',
+    estimatedTime: '10-20 min',
+    accent: 'teal',
+    Icon: KeyRound,
     available: true
   },
   {

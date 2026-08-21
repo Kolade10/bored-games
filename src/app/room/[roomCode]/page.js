@@ -22,6 +22,8 @@ import WordleGame from '@/components/WordleGame';
 import TriviaGame from '@/components/TriviaGame';
 import GuessMeGame from '@/components/GuessMeGame';
 import WhoMoreLikelyGame from '@/components/WhoMoreLikelyGame';
+import UndercoverGame from '@/components/UndercoverGame';
+import PasswordGame from '@/components/PasswordGame';
 import RoomChat from '@/components/RoomChat';
 
 const GAME_TITLES = {
@@ -30,7 +32,9 @@ const GAME_TITLES = {
   'wordle': 'Word Duel',
   'trivia': 'Trivia',
   'guess-me': 'Guess Me',
-  'who-more-likely': "Who's More Likely?"
+  'who-more-likely': "Who's More Likely?",
+  'undercover': 'Undercover',
+  'password': 'Password'
 };
 
 // Trivia is worth playing alone - it is also just a question feed.
@@ -40,7 +44,9 @@ const MIN_PLAYERS_BY_GAME = {
   'wordle': 2,
   'trivia': 1,
   'guess-me': 2,
-  'who-more-likely': 2
+  'who-more-likely': 2,
+  'undercover': 4,
+  'password': 4
 };
 
 const GAME_RULES = {
@@ -74,6 +80,19 @@ const GAME_RULES = {
     'The other predicts what they picked.',
     'Roles swap every round so you both answer and guess equally.',
     'Correct predictions score 10, hard questions 15, and streaks multiply it.'
+  ],
+  'undercover': [
+    'Everyone gets the same secret word except one player.',
+    'Give a one-word clue in turn - show you know it without saying it.',
+    'Vote in secret for whoever seems out of place.',
+    'A caught undercover still gets one guess at your word to steal the win.'
+  ],
+  'password': [
+    'Everyone is split into teams and takes turns giving clues.',
+    'The clue giver sees a secret word and describes it out loud.',
+    'Every word bans the obvious clues - say one and the word is void.',
+    'First clue is worth 5 points, second 3, anything after that 1.',
+    'Passing a word burns it for the whole room.'
   ],
   'who-more-likely': [
     'You both privately pick which of you is more likely.',
@@ -377,6 +396,8 @@ export default function RoomLobby() {
       room.game_type === 'trivia' ? <TriviaGame {...gameProps} /> :
       room.game_type === 'guess-me' ? <GuessMeGame {...gameProps} /> :
       room.game_type === 'who-more-likely' ? <WhoMoreLikelyGame {...gameProps} /> :
+      room.game_type === 'undercover' ? <UndercoverGame {...gameProps} /> :
+      room.game_type === 'password' ? <PasswordGame {...gameProps} /> :
       null;
 
     if (game) {

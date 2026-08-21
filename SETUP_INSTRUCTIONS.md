@@ -69,6 +69,25 @@ each file (not the filename) and hit Run:
 9. **`database_migration_9.sql`** - saves charades games so a refresh does not
    lose the scores. Optional: without it charades falls back to storing the
    game in the browser only.
+10. **`database_migration_10.sql`** - adds Undercover, including its 298 word
+    pairs. Required before that game can be played. Also idempotent.
+11. **`database_migration_11.sql`** - adds Password, including its 276 word
+    bank. Required before that game can be played. Also idempotent.
+
+Migration 11 has one job: only the clue giver sees the word. Their own team is
+sitting right next to them, so the bank is not readable from a browser at all
+and the live word comes from a function that checks you are the clue giver for
+that turn. Everything else about a turn is public, so the score can move in
+real time without leaking the answer, and past words are released only once the
+turn is over. The clock is enforced server-side too - nothing scores after
+`started_at + seconds`.
+
+Migration 10 hides three things, because the game is nothing without them: the
+two words, who the undercover is, and everybody's votes until the last one is
+cast. The word pairs live in a table the browser cannot read at all, and the
+server picks both the pair and the undercover - if the host's client chose,
+whoever pressed start would know both words, and any player could read the
+chosen pair id and look them both up.
 
 Charades is the one game with no room and no second device, so migration 9 is
 just one row per game holding the whole state as JSON. The browser keeps its
